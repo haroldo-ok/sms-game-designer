@@ -1,8 +1,5 @@
 # SMS Game Designer
 
-*Formerly "SMS Game Maker"; renamed because another tool already had that
-name. Projects and autosaves from before the rename open as they are.*
-
 A no-code environment for making Sega Master System games: Blockly for logic,
 pixel editors for art, a compiler running as WASM, and an emulator to play
 the result. Everything happens in the browser — no server, no accounts, no
