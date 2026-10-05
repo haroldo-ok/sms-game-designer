@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+bin/cvbasic
+bin/gasm80
+bin/asm/
+toolchain/CVBasic/
+toolchain/gasm80/

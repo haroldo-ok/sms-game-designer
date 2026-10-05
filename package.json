@@ -1,0 +1,58 @@
+{
+  "name": "sms-game-designer",
+  "productName": "SMS Game Designer",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A no-code environment for creating Sega Master System games using Blockly and CVBasic.",
+  "author": "Ported from vcs-game-maker by haroldo-ok",
+  "type": "module",
+  "scripts": {
+    "serve": "vue-cli-service serve",
+    "build": "vue-cli-service build",
+    "lint": "vue-cli-service lint",
+    "test": "node tools/test.mjs && node tools/test-blocks.mjs && node tools/test-ui.mjs && node tools/test-render.mjs && node tools/test-store.mjs && node tools/test-wasm.mjs && node tools/test-boot.mjs && node tools/test-e2e.mjs",
+    "sample": "node tools/make-sample.mjs",
+    "rom": "node tools/build.mjs examples/shmup.json",
+    "wasm": "make -C toolchain wasm"
+  },
+  "dependencies": {
+    "@bjorn3/browser_wasi_shim": "^0.4.2",
+    "@vue/composition-api": "^1.0.0-rc.13",
+    "blockly": "^10.4.3",
+    "core-js": "^3.6.5",
+    "file-saver": "^2.0.5",
+    "jsdom": "^30.0.1",
+    "jszip": "^3.10.1",
+    "lodash": "^4.17.21",
+    "register-service-worker": "^1.7.2",
+    "vue": "2.6.14",
+    "vue-router": "^3.2.0",
+    "vuetify": "^2.4.0"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-plugin-eslint": "~5.0.0",
+    "@vue/cli-plugin-router": "~5.0.0",
+    "@vue/cli-service": "~5.0.8",
+    "@vue/test-utils": "1.3.6",
+    "babel-eslint": "^10.1.0",
+    "eslint": "^7.30.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-vue": "^7.13.0",
+    "jsdom": "^30.1.1",
+    "raw-loader": "^4.0.2",
+    "sass": "~1.32",
+    "sass-loader": "^10.0.0",
+    "vue-cli-plugin-vuetify": "~2.1.0",
+    "vue-template-compiler": "2.6.14",
+    "vuetify-loader": "^1.7.2"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ],
+  "optionalDependencies": {
+    "canvas": "^3.2.0"
+  }
+}
