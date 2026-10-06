@@ -167,6 +167,34 @@ button that does it: *"enemy vs player_shot is 48 checks a frame. Checking it
 every other frame halves that, and at these speeds it is not noticeable."* A
 user cannot act on a number alone.
 
+## Playing
+
+Press **Play** and the game is compiled and running in a few hundred
+milliseconds, entirely inside the browser. Both halves are local: the
+compilers are CVBasic and gasm80 built to WebAssembly, and the emulator is
+[EmulatorJS](https://github.com/EmulatorJS/EmulatorJS) 4.2.3 trimmed to its
+Master System core and shipped in `public/emulator/`. Nothing is fetched from
+anywhere else, and a test holds the editor to that by recording every request
+Play makes.
+
+The emulator is reproducible rather than a blob somebody assembled once:
+
+```sh
+pip install py7zr
+npm run emulator      # python3 tools/vendor-emulator.py
+```
+
+downloads the release, keeps the 30 files these consoles need (2.9 MB of a
+303 MB release), disables its update check, verifies the core handles both
+`.sms` and `.sg` cartridges, and writes a manifest of SHA-256 hashes that the
+test suite checks.
+
+In-editor play covers the Master System and the SG-1000. ColecoVision and MSX
+games build, and the Play tab says plainly that you need to download the ROM
+to run them.
+
+EmulatorJS and the cores are GPL-3.0; see `public/emulator/LICENSE-EmulatorJS`.
+
 ## Examples
 
 **Open → Examples** in the editor offers three working games: *Bug Blaster*

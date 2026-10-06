@@ -28,15 +28,13 @@
       <div ref="host" class="screen" />
 
       <!--
-        The emulator is the one part of the editor that comes from the
-        internet. When it cannot load, the ROM is still good - say so, and
-        point at the button that gets it out.
+        The emulator is bundled, so this is rare: a copy of the editor
+        missing its emulator folder, a console whose core is not bundled, or
+        a browser without WebGL. Whatever the cause, the ROM is still good -
+        say so, and point at the button that gets it out.
       -->
       <div v-if="emulatorError" class="emu-error">
-        <b>The emulator could not be loaded.</b>
-        It is fetched from cdn.jsdelivr.net, so this usually means you are
-        offline. Your game built correctly: use <b>Download ROM</b> and run it
-        in any {{ target.label }} emulator, or on real hardware.
+        {{ emulatorError }}
       </div>
     </template>
 

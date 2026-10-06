@@ -742,6 +742,7 @@ const SUITES = [
   ['tools/test-render.mjs', 'editor rendering'],
   ['tools/test-store.mjs', 'project store'],
   ['tools/test-wasm.mjs', 'in-browser compiler'],
+  ['tools/test-emulator.mjs', 'bundled emulator'],
   ['tools/test-boot.mjs', 'built editor boots'],
   ['tools/test-e2e.mjs', 'built editor, end to end'],
 ];

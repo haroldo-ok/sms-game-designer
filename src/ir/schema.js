@@ -23,6 +23,8 @@ export const SCHEMA_VERSION = 3;
 export const TARGETS = {
   sms: {
     id: 'sms',
+    // Whether in-editor play is bundled for this console (public/emulator).
+    bundledEmulator: true,
     // Largest cartridge the generator will produce without bank switching.
     // gasm80 rounds the image up to a power of two, so a build can quietly
     // grow from 8K to 16K; what it cannot do is exceed this.
@@ -73,6 +75,8 @@ export const TARGETS = {
   },
   sg1000: {
     id: 'sg1000',
+    // Whether in-editor play is bundled for this console (public/emulator).
+    bundledEmulator: true,
     // Largest cartridge the generator will produce without bank switching.
     // gasm80 rounds the image up to a power of two, so a build can quietly
     // grow from 8K to 16K; what it cannot do is exceed this.
@@ -107,6 +111,8 @@ export const TARGETS = {
   },
   coleco: {
     id: 'coleco',
+    // Whether in-editor play is bundled for this console (public/emulator).
+    bundledEmulator: false,
     // Largest cartridge the generator will produce without bank switching.
     // gasm80 rounds the image up to a power of two, so a build can quietly
     // grow from 8K to 16K; what it cannot do is exceed this.
@@ -139,6 +145,8 @@ export const TARGETS = {
   },
   msx: {
     id: 'msx',
+    // Whether in-editor play is bundled for this console (public/emulator).
+    bundledEmulator: false,
     // Largest cartridge the generator will produce without bank switching.
     // gasm80 rounds the image up to a power of two, so a build can quietly
     // grow from 8K to 16K; what it cannot do is exceed this.

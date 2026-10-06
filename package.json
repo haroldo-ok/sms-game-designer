@@ -1,7 +1,7 @@
 {
   "name": "sms-game-designer",
   "productName": "SMS Game Designer",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "A no-code environment for creating Sega Master System games using Blockly and CVBasic.",
   "author": "Ported from vcs-game-maker by haroldo-ok",
@@ -10,10 +10,11 @@
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
-    "test": "node tools/test.mjs && node tools/test-blocks.mjs && node tools/test-ui.mjs && node tools/test-render.mjs && node tools/test-store.mjs && node tools/test-wasm.mjs && node tools/test-boot.mjs && node tools/test-e2e.mjs",
+    "test": "node tools/test.mjs && node tools/test-blocks.mjs && node tools/test-ui.mjs && node tools/test-render.mjs && node tools/test-store.mjs && node tools/test-wasm.mjs && node tools/test-emulator.mjs && node tools/test-boot.mjs && node tools/test-e2e.mjs",
     "sample": "node tools/make-sample.mjs",
     "rom": "node tools/build.mjs examples/shmup.json",
-    "wasm": "make -C toolchain wasm"
+    "wasm": "make -C toolchain wasm",
+    "emulator": "python3 tools/vendor-emulator.py"
   },
   "dependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",

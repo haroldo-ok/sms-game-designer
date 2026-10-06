@@ -760,6 +760,56 @@ way to the emulator, and requires it to match the native build byte for
 byte. jsdom has neither Workers nor `fetch`, so the build runs on the page -
 the same code the Worker runs - and the harness supplies `fetch`.
 
+## Bundling the emulator
+
+Play loaded EmulatorJS from `@emulatorjs/emulatorjs@latest` on jsdelivr: a
+network request on every Play, and an unpinned one, so the emulator could
+change under the editor without notice. It is now release 4.2.3, vendored
+into `public/emulator/` by a script.
+
+A full release is 303 MB, nearly all of it cores for other machines. What
+the Master System needs is 2.9 MB, and finding the exact set meant reading
+the frontend rather than guessing:
+
+- `segaMS` maps to `["smsplus", "genesis_plus_gx", "picodrive"]`; the first is
+  the default, so smsplus is the core.
+- The build is chosen as `core + (threads ? "-thread" : "") + (webgl2 ? "" :
+  "-legacy") + "-wasm.data"`. Threads need a cross-origin-isolated page *and*
+  an opt-in, so the threaded builds are never loaded from a plain static
+  server. WebGL 2 is only used when the core's report says so, and smsplus's
+  report says nothing - so by default the *legacy* build is the one loaded.
+  Keeping only the obvious one would have broken it for everyone.
+- There is no separate SG-1000 system; SG-1000 cartridges go through the same
+  core, which picks its mode from the file extension. For a blob URL that
+  name comes from `EJS_gameName`, so the editor names SG-1000 ROMs `game.sg` -
+  and the core's own `core.json` lists both `sms` and `sg`.
+
+Two behaviours would have quietly undone the bundling, and both work fine
+online, which is why neither would ever have been noticed:
+
+- **A missing core is fetched from `cdn.emulatorjs.org` instead.** So the
+  end-to-end test records every request Play makes and fails on any that
+  leave the machine, and requires the core it asks for to exist in the bundle.
+- **An update check runs whenever the editor is served from localhost** -
+  which is how everyone runs it. The vendoring script disables that one call
+  by replacing an exact expression, and refuses to proceed if a future
+  release changes it.
+
+With both handled, pressing Play makes no request to anywhere but the server
+the editor came from. jsdom can follow the emulator as far as handing its core
+to the decompression Worker; running the core needs WebGL, which no headless
+DOM has, so the last step - the game actually on screen - is verified by
+opening it in a browser, not by this suite.
+
+Bundling also exposed two harness problems. The editor instance opened
+*without* Workers, to test the in-page compile fallback, let the emulator try
+to start its own Worker and throw - asynchronously, straight into Node,
+killing the run on some timings and not others. That instance now has no
+emulator, and any error escaping a page is collected and reported by a test
+instead of aborting the process. And a check written to catch the compiler's
+Worker failing caught the emulator's instead, so it now distinguishes them:
+the editor's worker is a script under `js/`, never a `blob:` URL.
+
 ## Reproducing
 
 ```sh

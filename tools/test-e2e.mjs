@@ -20,6 +20,7 @@ import {existsSync, readFileSync} from 'fs';
 import {join, resolve, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import {createRequire} from 'module';
+import {installWorker} from './worker-emulator.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(root + '/');
@@ -40,6 +41,17 @@ try {
 
 let passed = 0;
 let failed = 0;
+
+/**
+ * Errors that escape a page asynchronously - thrown from a promise callback
+ * inside a script jsdom loaded - land here rather than in the virtual
+ * console, and by default they kill the process mid-run. That made this
+ * test's result depend on timing. They are now collected, and the last test
+ * fails if any arrived, naming them; a crash is a result, not an abort.
+ */
+const escaped = [];
+process.on('uncaughtException', (e) => escaped.push(String((e && e.message) || e)));
+process.on('unhandledRejection', (e) => escaped.push(String((e && e.message) || e)));
 
 async function test(name, fn) {
   try {
@@ -64,18 +76,33 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const TYPES = {js: 'application/javascript', css: 'text/css', json: 'application/json'};
 
 /** Answer every request from dist/, so script tags and lazy chunks load. */
-const fromDist = requestInterceptor((request) => {
-  const url = new URL(request.url);
-  // Only the editor's own files. Anything else - the emulator's CDN, in
-  // practice - is unreachable, as it would be offline.
-  if (url.hostname !== 'localhost') return new Response('offline', {status: 404});
-  const path = url.pathname.replace(/^\//, '');
-  try {
-    return new Response(readFileSync(join(dist, path)),
-        {headers: {'Content-Type': TYPES[path.split('.').pop()] || 'text/plain'}});
-  } catch {
-    return new Response('not found', {status: 404});
-  }
+/**
+ * Serve dist/ as a static server mounted at `prefix` would. Only the
+ * editor's own files: anything else - the emulator's CDN, in practice - is
+ * unreachable, as it would be offline. Returns null for a 404.
+ */
+function serveFrom(prefix, opts = {}, log = null) {
+  return (url) => {
+    if (log) log.push(url.href);
+    if (url.hostname !== 'localhost') return null;
+    if (!url.pathname.startsWith(prefix)) return null;
+    const path = url.pathname.slice(prefix.length);
+    if (opts.withoutCompiler && path.startsWith('wasm/')) return null;
+    if (opts.withoutEmulator && path.startsWith('emulator/')) return null;
+    try {
+      return readFileSync(join(dist, path));
+    } catch {
+      return null;
+    }
+  };
+}
+
+const interceptorFor = (serve) => requestInterceptor((request) => {
+  const path = new URL(request.url).pathname;
+  const body = serve(new URL(request.url));
+  return body
+    ? new Response(body, {headers: {'Content-Type': TYPES[path.split('.').pop()] || 'text/plain'}})
+    : new Response('not found', {status: 404});
 });
 
 /**
@@ -87,36 +114,47 @@ const fromDist = requestInterceptor((request) => {
  * kept, because that is where the ROM goes on its way to the emulator - so a
  * test can compare the editor's ROM with the native compilers' byte for byte.
  *
+ * Web Workers are emulated by default (see worker-emulator.mjs), so the
+ * editor takes the same path it takes in a browser: the real built worker
+ * bundle, loading its own chunks by the browser's URL rules. Before that,
+ * jsdom's lack of Workers sent every build down the in-page fallback, and a
+ * worker that could not load its own code shipped with every test green.
+ *
  * @param {object} [opts]
  * @param {boolean} [opts.withoutCompiler] answer 404 for wasm/, as a build
  *   without the compilers would
+ * @param {boolean} [opts.withoutEmulator] answer 404 for emulator/, as a
+ *   copy of the editor missing its bundled emulator would
+ * @param {boolean} [opts.noWorker] leave Worker undefined, to exercise the
+ *   in-page fallback deliberately
+ * @param {string} [opts.prefix] serve the editor from this path, not '/'
  */
 async function openEditor(opts = {}) {
   const problems = [];
   const vc = new VirtualConsole()
       .on('jsdomError', (e) => problems.push(e.message))
       .on('error', (m) => problems.push(String(m)));
+  const prefix = opts.prefix || '/';
+  const requests = [];
+  const serve = serveFrom(prefix, opts, requests);
+  let workers = {created: [], errors: []};
   const dom = new JSDOM(readFileSync(join(dist, 'index.html'), 'utf8'), {
-    url: 'http://localhost/',
+    url: `http://localhost${prefix}`,
+    beforeParse(win) {
+      if (!opts.noWorker) workers = installWorker(win, serve);
+    },
     runScripts: 'dangerously',
-    resources: {interceptors: [fromDist]},
+    resources: {interceptors: [interceptorFor(serve)]},
     pretendToBeVisual: true,
     virtualConsole: vc,
   });
   const w = dom.window;
   const blobs = [];
   w.fetch = async (url) => {
-    const u = new URL(url, 'http://localhost/');
-    if (opts.withoutCompiler && u.pathname.startsWith('/wasm/')) {
-      return {ok: false, status: 404};
-    }
-    try {
-      const b = readFileSync(join(dist, u.pathname.slice(1)));
-      return {ok: true, status: 200, text: async () => b.toString('utf8'),
-        arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length)};
-    } catch {
-      return {ok: false, status: 404};
-    }
+    const b = serve(new URL(url, w.location.href));
+    if (!b) return {ok: false, status: 404};
+    return {ok: true, status: 200, text: async () => b.toString('utf8'),
+      arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length)};
   };
   w.URL.createObjectURL = (blob) => {
     blobs.push(blob);
@@ -130,6 +168,8 @@ async function openEditor(opts = {}) {
     w,
     problems,
     blobs,
+    requests,
+    workers: () => workers,
     text: () => app().textContent.replace(/\s+/g, ' '),
     tab: (name) => [...w.document.querySelectorAll('.main-pane > .v-tabs .v-tab')]
         .find((t) => t.textContent.trim().toLowerCase() === name.toLowerCase()),
@@ -314,6 +354,33 @@ await test('Play builds the open project in the browser', async () => {
   assert(/32 KB ROM/.test(built.textContent), `the Play tab says: ${built.textContent}`);
 });
 
+/**
+ * The editor's own Workers, as opposed to the emulator's.
+ *
+ * Since the emulator is bundled, it gets far enough to start its own
+ * decompression Worker - from a blob: URL, which this harness cannot serve,
+ * because jsdom has no real URL.createObjectURL. That failure belongs to the
+ * test environment and to EmulatorJS, and it must not be read as the
+ * compiler failing; equally, a real compiler failure must never be filtered
+ * out with it. The editor's worker is always a script under js/, never a
+ * blob, so that is the line.
+ */
+function editorWorkers(ed) {
+  const w = ed.workers();
+  return {
+    created: w.created.filter((u) => !u.startsWith('blob:')),
+    errors: w.errors.filter((e) => !/blob:/.test(e)),
+  };
+}
+
+await test('the build ran in the Worker, which loaded all of its code', () => {
+  // The bug this guards against: the worker asked for js/js/755…js and
+  // failed before compiling anything.
+  const w = editorWorkers(cp);
+  assert(w.created.length >= 1, 'no Worker was started; the in-page fallback built it');
+  assert(!w.errors.length, w.errors.join('\n'));
+});
+
 await test('the ROM the editor builds is the ROM the native compilers build', async () => {
   // Captured on its way to the emulator. Anything but identical would mean
   // the browser ships a different game from the one the playtests verified.
@@ -335,12 +402,53 @@ await test('the budget meter switches to the compiler\'s own RAM figure', () => 
   assert(/518\/79\d\d/.test(ram), `expected the shmup's 518 bytes: "${ram}"`);
 });
 
-await test('with the emulator unreachable, the page says so and keeps the ROM', async () => {
-  await wait(800);
-  const note = cp.w.document.querySelector('.emu-error');
-  assert(note, 'the emulator failed to load and nothing on screen says so');
-  assert(cp.button('Download ROM'), 'no way to get the ROM out');
+await test('Play loads the emulator from the editor\'s own folder, and nothing from anywhere else', async () => {
+  // EmulatorJS is bundled, trimmed to the Master System core. Two things
+  // would undo that silently: a core missing from the bundle, which it
+  // quietly fetches from cdn.emulatorjs.org instead, and its update check,
+  // which phones the same CDN whenever it runs on localhost. Either works
+  // online and is invisible - so assert on the requests themselves.
+  await wait(1500);
+  // Network requests to anywhere but the server the editor came from. A
+  // blob: URL is memory inside the page, not a request, so it is not one.
+  const external = cp.requests.filter((u) => {
+    const url = new URL(u);
+    return /^https?:$/.test(url.protocol) && url.hostname !== 'localhost';
+  });
+  assert(!external.length, `requests left the machine: ${external.join(', ')}`);
+  const emu = cp.requests.filter((u) => u.includes('/emulator/'));
+  ['emulator/loader.js', 'emulator/emulator.min.js',
+    'emulator/cores/reports/smsplus.json'].forEach((f) => {
+    assert(emu.some((u) => u.endsWith(f)), `${f} was never requested`);
+  });
+  const core = emu.find((u) => /cores\/smsplus(-legacy)?-wasm\.data$/.test(u));
+  assert(core, 'the emulator never asked for its core');
+  const onDisk = core.replace(/^http:\/\/localhost\//, '');
+  assert(existsSync(join(dist, onDisk)),
+      `the emulator asked for ${onDisk}, which the bundle does not contain - ` +
+    'in a browser it would fetch it from the CDN instead');
 });
+
+await test('it gets as far as unpacking the core', () => {
+  // The furthest a jsdom can follow it: the core arrives, and EmulatorJS
+  // starts the Worker that unpacks it. Running the core itself needs WebGL,
+  // which no headless DOM provides, so this is where the test stops.
+  const unpacker = cp.requests.some((u) => u.endsWith('emulator/compression/extract7z.js'));
+  assert(unpacker, 'the core was never handed to the decompressor');
+});
+
+const ne = await openEditor({withoutEmulator: true});
+
+await test('with the emulator missing, the page says so and keeps the ROM', async () => {
+  await playFirstExample(ne);
+  await wait(800);
+  const note = ne.w.document.querySelector('.emu-error');
+  assert(note, 'the emulator failed to load and nothing on screen says so');
+  assert(/Download ROM/.test(note.textContent), 'the notice does not say how to get the ROM');
+  assert(ne.button('Download ROM'), 'no way to get the ROM out');
+});
+
+ne.close();
 
 await test('Download ROM hands over the same bytes', async () => {
   const before = cp.blobs.length;
@@ -379,6 +487,56 @@ await test('without the compilers, Play explains what is missing', async () => {
 });
 
 nc.close();
+
+/* ---- other places the editor has to work ---------------------------- */
+
+async function playFirstExample(ed) {
+  ed.button('Open').click();
+  await wait(300);
+  [...ed.w.document.querySelectorAll('.example-item')][0].click();
+  await wait(1500);
+  ed.button('Play').click();
+  for (let i = 0; i < 60 && !ed.w.document.querySelector('.play .built'); i++) {
+    await wait(250);
+  }
+  return !!ed.w.document.querySelector('.play .built');
+}
+
+const sub = await openEditor({prefix: '/games/sms/designer/'});
+
+await test('it works from a subdirectory, not just the root of a site', async () => {
+  // The build is meant to be relocatable. Its public path is worked out at
+  // run time from each script's own URL, which is exactly the kind of thing
+  // that works at / and breaks one folder down.
+  const built = await playFirstExample(sub);
+  const w = editorWorkers(sub);
+  assert(!w.errors.length, w.errors.join('\n'));
+  assert(w.created.every((u) => u.includes('/games/sms/designer/js/')),
+      `the worker was loaded from ${w.created.join(', ')}`);
+  assert(built, 'nothing was built from a subdirectory');
+});
+
+sub.close();
+
+// Without the emulator too: it needs a Worker to unpack its core, so in a
+// world with none it can only fail - and this test is about the compiler.
+const inPage = await openEditor({noWorker: true, withoutEmulator: true});
+
+await test('without Workers, the page builds the same ROM itself', async () => {
+  const built = await playFirstExample(inPage);
+  assert(built, 'the in-page fallback built nothing');
+  if (nativeRom) {
+    const rom = Buffer.from(await inPage.blobs[0].arrayBuffer());
+    assert(Buffer.compare(rom, nativeRom) === 0,
+        'the in-page fallback built a different ROM');
+  }
+});
+
+inPage.close();
+
+await test('no error escaped a page while the editor was being driven', () => {
+  assert(!escaped.length, escaped.slice(0, 3).join('\n'));
+});
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

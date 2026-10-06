@@ -23,7 +23,23 @@ import {TARGETS} from '../ir/schema.js';
 export const running = ref(false);
 export const emulatorError = ref(null);
 
-const CDN = 'https://cdn.jsdelivr.net/npm/@emulatorjs/emulatorjs@latest/data/';
+/**
+ * EmulatorJS, bundled with the editor rather than fetched from a CDN.
+ *
+ * It used to load `@emulatorjs/emulatorjs@latest` from jsdelivr: a network
+ * dependency on every Play, and an unpinned one, so the emulator could change
+ * underneath the editor at any time. public/emulator/ now holds release 4.2.3
+ * trimmed to what these consoles need - the frontend, the decompressors, the
+ * translations, and the smsplus core in its WebGL 2 and legacy builds. The
+ * release's other 185 cores and its threaded builds are left out: 2.9 MB
+ * instead of 303.
+ *
+ * Resolved against the page, like the compilers, so a copy hosted in a
+ * subdirectory finds it.
+ */
+function emulatorBase() {
+  return new URL('emulator/', document.baseURI).href;
+}
 
 /**
  * @param {HTMLElement} host
@@ -33,6 +49,18 @@ const CDN = 'https://cdn.jsdelivr.net/npm/@emulatorjs/emulatorjs@latest/data/';
 export function play(host, rom, targetId) {
   const target = TARGETS[targetId] || TARGETS.sms;
   emulatorError.value = null;
+
+  // Only the Master System core is bundled. EmulatorJS would otherwise reach
+  // for the missing ColecoVision or MSX core on its own CDN, quietly - which
+  // works online, fails offline, and says nothing either way.
+  if (!target.bundledEmulator) {
+    emulatorError.value =
+      `Playing ${target.label} games inside the editor is not supported yet. ` +
+      'Your game built correctly: download the ROM and run it in a ' +
+      `${target.label} emulator${target.needsBios ? ' (it will need a BIOS image)' : ''}.`;
+    host.innerHTML = '';
+    return () => {};
+  }
 
   // A fresh container each time: EmulatorJS keeps a lot of global state and
   // reusing one across builds is the quickest way to end up debugging the
@@ -58,7 +86,10 @@ export function play(host, rom, targetId) {
   window.EJS_player = '#game';
   window.EJS_core = target.emulatorCore;
   window.EJS_gameUrl = url;
-  window.EJS_pathtodata = CDN;
+  window.EJS_pathtodata = emulatorBase();
+  // Threaded builds are not bundled, so never ask for one - even on a host
+  // that is cross-origin isolated and would otherwise allow them.
+  window.EJS_threads = false;
   window.EJS_startOnLoaded = true;
   // With an extension, so the core can tell an SG-1000 image from a Master
   // System one - a blob URL carries no file name of its own.
@@ -69,11 +100,11 @@ export function play(host, rom, targetId) {
   }
 
   const script = document.createElement('script');
-  script.src = `${CDN}loader.js`;
+  script.src = `${emulatorBase()}loader.js`;
   script.onerror = () => {
     emulatorError.value =
-      'Could not load the emulator. You can still download the ROM and run ' +
-      'it in an emulator of your own, or on real hardware.';
+      'The emulator could not be loaded. Your game built correctly: use ' +
+      'Download ROM and run it in any emulator, or on real hardware.';
     running.value = false;
   };
   document.body.appendChild(script);

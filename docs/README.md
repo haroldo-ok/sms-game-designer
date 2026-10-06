@@ -21,19 +21,25 @@ a Web Worker and browsers will not start one from a file. The build uses
 relative paths throughout, so it works from a subdirectory, a static host,
 or an itch.io page.
 
-## Building a game
+## Building and playing a game
 
 Press **Play**. The editor compiles your project to a ROM right there in the
-browser — usually in well under a second — and runs it. **Download ROM** on
-the Play tab gives you the cartridge image to keep, share, run in any
-emulator, or put on real hardware.
+browser, usually in well under a second, and runs it. **Download ROM** on the
+Play tab gives you the cartridge image to keep, share, run in any emulator,
+or put on real hardware.
 
-The compilers are CVBasic and gasm80, built to WebAssembly; they are in
-`wasm/`. The ROMs they produce are byte-identical to the native compilers'.
+Everything happens inside this folder. The compilers - CVBasic and gasm80,
+built to WebAssembly - are in `wasm/`, and the ROMs they produce are
+byte-identical to the native compilers'. The emulator is EmulatorJS 4.2.3,
+trimmed to its Master System core, in `emulator/`. Pressing Play makes no
+request to anywhere but the server you are serving this folder from, so it
+works offline.
 
-The emulator is the one part fetched from the internet (EmulatorJS, from
-cdn.jsdelivr.net). Offline, the game still builds; the Play tab says the
-emulator could not load and the Download button still works.
+In-editor play covers the Master System and the SG-1000. ColecoVision and MSX
+games build, and the Play tab tells you to download the ROM to run them.
+
+EmulatorJS and its cores are GPL-3.0; the licence is in
+`emulator/LICENSE-EmulatorJS`.
 
 ## Start with an example
 
@@ -53,7 +59,8 @@ puts the chosen actor where you click; right-click one to remove it.
 ## Your work is yours
 
 Projects autosave in your browser, and **Save** downloads the whole project
-as a single `.smsgd` file. Nothing leaves your machine.
+as a single `.smsgd` file. Nothing you make leaves your machine, and neither
+does anything the editor does.
 
 ## Source maps
 
