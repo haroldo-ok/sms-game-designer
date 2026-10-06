@@ -79,6 +79,19 @@ KEEP_DIRS = ['data/localization/']
 UPDATE_CHECK = '&&this.checkForUpdates()'
 UPDATE_CHECK_OFF = '&&false/* update check disabled: see tools/vendor-emulator.py */'
 
+# The loader runs on every Play and, unpatched, loads the frontend every time:
+# another script tag and stylesheet per Play, and a second evaluation of a
+# file whose top-level class declarations cannot be declared twice. Load it
+# only if it is not already there.
+LOADER_PATCHES = [
+    ('await loadScript("emulator.min.js");',
+     'if (typeof EmulatorJS === "undefined") await loadScript("emulator.min.js");'
+     ' /* load once: see tools/vendor-emulator.py */'),
+    ('await loadStyle("emulator.min.css");',
+     'if (!document.querySelector(\'link[href$="emulator.min.css"]\'))'
+     ' await loadStyle("emulator.min.css");'),
+]
+
 # The consoles the editor plays in-browser, by the extension it gives them.
 REQUIRED_EXTENSIONS = ['sms', 'sg']
 
@@ -134,6 +147,18 @@ def main():
     with open(js_path, 'w', encoding='utf-8') as f:
         f.write(js)
 
+    loader_path = os.path.join(work, 'data/loader.js')
+    with open(loader_path, encoding='utf-8') as f:
+        loader = f.read()
+    for old, new in LOADER_PATCHES:
+        count = loader.count(old)
+        if count != 1:
+            fail(f'expected `{old}` exactly once in loader.js, found it {count} '
+                 'times - this release needs the patch revisited')
+        loader = loader.replace(old, new)
+    with open(loader_path, 'w', encoding='utf-8') as f:
+        f.write(loader)
+
     # Check each core really is what the editor needs before shipping it.
     for core in ['smsplus-wasm.data', 'smsplus-legacy-wasm.data']:
         unpacked = tempfile.mkdtemp()
@@ -165,7 +190,8 @@ def main():
 
     # A manifest the test suite holds the folder to.
     lines = [f'EmulatorJS {ejs_version}, trimmed by tools/vendor-emulator.py',
-             'Patched: the cdn.emulatorjs.org update check is disabled.', '']
+             'Patched: the cdn.emulatorjs.org update check is disabled.',
+             'Patched: loader.js loads the frontend once, not on every Play.', '']
     total = 0
     for root, _, files in os.walk(DEST):
         for name in sorted(files):
@@ -177,7 +203,7 @@ def main():
             total += len(data)
             lines.append(f'{hashlib.sha256(data).hexdigest()}  {rel}')
     with open(os.path.join(DEST, 'MANIFEST.txt'), 'w') as f:
-        f.write('\n'.join(lines[:3] + sorted(lines[3:])) + '\n')
+        f.write('\n'.join(lines[:4] + sorted(lines[4:])) + '\n')
 
     print(f'EmulatorJS {ejs_version}: {len(wanted)} files, '
           f'{total / 1e6:.1f} MB, into public/emulator/')

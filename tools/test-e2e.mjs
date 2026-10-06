@@ -502,6 +502,82 @@ async function playFirstExample(ed) {
   return !!ed.w.document.querySelector('.play .built');
 }
 
+/* ---- playing twice ---------------------------------------------------- */
+
+const twice = await openEditor();
+
+/** Press Play again and wait for a different emulator instance to appear. */
+async function playAgain(ed) {
+  const before = ed.w.EJS_emulator;
+  ed.button('Play').click();
+  for (let i = 0; i < 60 && ed.w.EJS_emulator === before; i++) await wait(250);
+  await wait(800);
+  return ed.w.EJS_emulator;
+}
+
+await test('a second Play replaces the first emulator instead of running beside it', async () => {
+  // Reported from real use: building and running again opened a second
+  // emulator while the first kept going. Stopping used to mean emptying the
+  // container - which removes the picture and leaves the program: its main
+  // loop, its audio, its 10 ms gamepad poll and its window listeners all
+  // carried on, detached from the page.
+  await playFirstExample(twice);
+  await wait(1500);
+  const first = twice.w.EJS_emulator;
+  assert(first, 'the first Play never created an emulator');
+
+  const second = await playAgain(twice);
+  assert(second && second !== first, 'the second Play did not start a fresh emulator');
+
+  const doc = twice.w.document;
+  assert(!doc.contains(first.elements.parent),
+      'the first emulator is still in the page');
+  assert(doc.querySelectorAll('.ejs_parent').length === 1,
+      `${doc.querySelectorAll('.ejs_parent').length} emulators in the page`);
+
+  // The tell-tale of an emulator still running off-screen: its gamepad poll
+  // reschedules itself every 10 ms for as long as it lives.
+  const t1 = first.gamepad && first.gamepad.timeout;
+  await wait(80);
+  const t2 = first.gamepad && first.gamepad.timeout;
+  assert(t1 === t2, 'the first emulator is still running, polling for gamepads');
+});
+
+await test('playing again does not pile up copies of the emulator\'s code', async () => {
+  // Every Play re-ran loader.js, and every run loaded emulator.min.js again:
+  // another script tag, another stylesheet, and a second evaluation of a
+  // file that declares top-level classes, which cannot be declared twice.
+  await playAgain(twice);
+  const doc = twice.w.document;
+  const count = (sel) => doc.querySelectorAll(sel).length;
+  assert(count('script[src$="emulator.min.js"]') === 1,
+      `${count('script[src$="emulator.min.js"]')} copies of emulator.min.js are loaded`);
+  assert(count('link[href$="emulator.min.css"]') <= 1,
+      `${count('link[href$="emulator.min.css"]')} copies of the emulator's stylesheet`);
+  assert(count('script[src$="loader.js"]') <= 1,
+      `${count('script[src$="loader.js"]')} loader scripts left in the page`);
+  const redeclared = twice.problems.filter((p) => /already been declared/.test(p));
+  assert(!redeclared.length, redeclared[0]);
+});
+
+await test('leaving the Play tab stops the emulator', async () => {
+  const running = twice.w.EJS_emulator;
+  twice.tab('Actors').click();
+  await wait(400);
+  twice.tab('Play').click();
+  await wait(400);
+  const t1 = running.gamepad && running.gamepad.timeout;
+  await wait(80);
+  // Coming back may start it again; what must not happen is the old one
+  // still ticking alongside whatever is there now.
+  if (twice.w.EJS_emulator !== running) {
+    assert(t1 === (running.gamepad && running.gamepad.timeout),
+        'an emulator replaced on returning to the tab is still running');
+  }
+});
+
+twice.close();
+
 const sub = await openEditor({prefix: '/games/sms/designer/'});
 
 await test('it works from a subdirectory, not just the root of a site', async () => {

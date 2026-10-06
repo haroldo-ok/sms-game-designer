@@ -161,5 +161,135 @@ test('consoles without a bundled core say so instead of reaching for the CDN', (
       `unexpected consoles without in-editor play: ${unbundled.map((t) => t.id)}`);
 });
 
+test('the loader loads the frontend once, not on every Play', () => {
+  const loader = readFileSync(join(emu, 'loader.js'), 'utf8');
+  assert(/if \(typeof EmulatorJS === "undefined"\) await loadScript\("emulator\.min\.js"\)/.test(loader),
+      'loader.js loads emulator.min.js unconditionally again');
+  assert(/querySelector\('link\[href\$="emulator\.min\.css"\]'\)/.test(loader),
+      'loader.js adds the stylesheet unconditionally again');
+});
+
+/* ---- one emulator at a time ------------------------------------------- */
+
+const {stopEmulator, createSessions} = await import('../src/hooks/emulator-session.js');
+
+/**
+ * Enough of an EmulatorJS instance to watch it being stopped: the pieces a
+ * stop has to reach, and the loading pipeline it has to cut short.
+ */
+function fakeEmulator({started = false} = {}) {
+  const listeners = {};
+  const e = {
+    started,
+    events: [],
+    elements: {parent: {removed: false, remove() {
+      this.removed = true;
+    }}},
+    gamepad: {polling: true, terminate() {
+      this.polling = false;
+    }},
+    gameManager: started ? {loop: 1, toggleMainLoop(v) {
+      this.loop = v;
+    }} : undefined,
+    Module: started ? {AL: {currentCtx: {audioCtx: {state: 'running', close() {
+      this.state = 'closed';
+    }}}}} : undefined,
+    on(name, fn) {
+      (listeners[name] = listeners[name] || []).push(fn);
+    },
+    callEvent(name) {
+      e.events.push(name);
+      (listeners[name] || []).forEach((fn) => fn());
+    },
+    startGame() {
+      e.started = true;
+      e.callEvent('start');
+    },
+  };
+  return e;
+}
+
+const stopped = (e) => !e.gamepad.polling && e.elements.parent.removed && e.events.includes('exit');
+
+console.log('\none emulator at a time');
+
+test('stopping a running emulator stops all of it', () => {
+  // Emptying its container - the old "stop" - left every one of these going.
+  const e = fakeEmulator({started: true});
+  stopEmulator(e);
+  assert(e.gameManager.loop === 0, 'the main loop is still running');
+  assert(e.events.includes('exit'), 'EmulatorJS\'s own exit was never fired');
+  assert(e.Module.AL.currentCtx.audioCtx.state === 'closed', 'its audio is still open');
+  assert(!e.gamepad.polling, 'it is still polling for gamepads every 10 ms');
+  assert(e.elements.parent.removed, 'it is still in the page');
+});
+
+test('stopping an emulator that is still loading stops it from ever starting', () => {
+  const e = fakeEmulator({started: false});
+  stopEmulator(e);
+  e.startGame();
+  assert(!e.started, 'it went on to start after being stopped');
+});
+
+test('stopping twice is harmless', () => {
+  const e = fakeEmulator({started: true});
+  stopEmulator(e);
+  stopEmulator(e);
+  assert(e.events.filter((n) => n === 'exit').length === 1, 'exit fired twice');
+});
+
+test('a second Play stops the first emulator and keeps the second', () => {
+  const win = {};
+  const s = createSessions(win);
+  s.begin();
+  const a = fakeEmulator({started: true});
+  win.EJS_emulator = a;
+  s.begin();
+  assert(stopped(a), 'the first emulator is still running');
+  const b = fakeEmulator();
+  win.EJS_emulator = b;
+  assert(!stopped(b), 'the second emulator was stopped on arrival');
+  assert(s.current === b && win.EJS_emulator === b, 'the second is not the current one');
+});
+
+test('Play pressed twice before the first emulator arrives runs only one', () => {
+  // The race: the first loader is still awaiting its scripts when the second
+  // Play starts. Its emulator then arrives with nobody holding it to stop -
+  // finishing loading and playing alongside the new one.
+  const win = {};
+  const s = createSessions(win);
+  s.begin();
+  s.begin();
+  const late = fakeEmulator();
+  win.EJS_emulator = late;
+  const wanted = fakeEmulator();
+  win.EJS_emulator = wanted;
+  assert(stopped(late), 'the emulator that arrived for the superseded Play was kept');
+  assert(!stopped(wanted) && s.current === wanted, 'the latest Play lost its emulator');
+});
+
+test('leaving Play before the emulator arrives still stops it', () => {
+  const win = {};
+  const s = createSessions(win);
+  const session = s.begin();
+  s.end(session);
+  const e = fakeEmulator();
+  win.EJS_emulator = e;
+  assert(stopped(e), 'an emulator arriving after its Play ended was kept running');
+  assert(s.current === null, 'a stopped emulator is still current');
+});
+
+test('a Play whose loader failed does not steal the next emulator', () => {
+  const win = {};
+  const s = createSessions(win);
+  const broken = s.begin();
+  s.abandon(broken);
+  s.begin();
+  const e = fakeEmulator();
+  win.EJS_emulator = e;
+  assert(!stopped(e) && s.current === e,
+      'the next Play\'s emulator was matched to the failed one and stopped');
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

@@ -1,7 +1,7 @@
 {
   "name": "sms-game-designer",
   "productName": "SMS Game Designer",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "A no-code environment for creating Sega Master System games using Blockly and CVBasic.",
   "author": "Ported from vcs-game-maker by haroldo-ok",

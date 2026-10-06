@@ -75,8 +75,8 @@
         }
         await loadStyle("emulator.css");
     } else {
-        await loadScript("emulator.min.js");
-        await loadStyle("emulator.min.css");
+        if (typeof EmulatorJS === "undefined") await loadScript("emulator.min.js"); /* load once: see tools/vendor-emulator.py */
+        if (!document.querySelector('link[href$="emulator.min.css"]')) await loadStyle("emulator.min.css");
     }
     const config = {};
     config.gameUrl = window.EJS_gameUrl;

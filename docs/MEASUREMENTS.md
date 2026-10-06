@@ -810,6 +810,45 @@ instead of aborting the process. And a check written to catch the compiler's
 Worker failing caught the emulator's instead, so it now distinguishes them:
 the editor's worker is a script under `js/`, never a `blob:` URL.
 
+## Two emulators at once
+
+Reported from real use: pressing Play a second time opened a second emulator
+while the first kept running.
+
+Stopping the emulator meant `host.innerHTML = ''`. That removes the picture
+and leaves the program. EmulatorJS's main loop, its audio, its gamepad poll -
+a timer rescheduling itself every 10 ms - and its window listeners all carried
+on, detached from the page. And each Play re-ran `loader.js`, which loaded
+`emulator.min.js` again every time: after three Plays, three copies.
+
+A test reproduced both before anything changed: after a second Play the first
+emulator's gamepad timer was still ticking, and the page held three copies of
+the frontend.
+
+EmulatorJS has no destroy. Its own Exit button fires an `exit` event, which
+stops the core's main loop and aborts it a second later; the editor now fires
+that, and also does what `exit` leaves out - the gamepad poll, the audio
+context, the element.
+
+The harder part was a race. EmulatorJS is configured through globals and
+constructed asynchronously: `loader.js` reads `EJS_gameUrl` after awaiting its
+scripts and a translation file, then assigns `window.EJS_emulator`. Press Play
+twice quickly and the first emulator arrives *after* it was meant to be
+stopped, with nothing holding it to stop it - so it finishes loading and
+plays. `window.EJS_emulator` is now a property the editor owns, every
+instance is matched to the Play that asked for it as it is constructed, and
+one that arrives for a Play since superseded or ended is shut down before it
+can start. An emulator that is stopped while still loading has its remaining
+pipeline steps replaced with no-ops, so whichever comes next is the last.
+
+The loader is patched in `tools/vendor-emulator.py` to load the frontend only
+once, asserted the same way as the update-check patch.
+
+The race cannot be hit reliably end to end, so it is tested directly with
+stand-in emulators: two Plays before either arrives, a Play ended before its
+emulator arrives, a Play whose loader failed. Breaking the arrival check on
+purpose fails exactly the two race tests.
+
 ## Reproducing
 
 ```sh

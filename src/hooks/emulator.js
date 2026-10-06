@@ -19,6 +19,11 @@
 
 import {ref} from '@vue/composition-api';
 import {TARGETS} from '../ir/schema.js';
+import {createSessions} from './emulator-session.js';
+
+// Created on first use, because it installs a property on window.
+let sessions = null;
+const getSessions = () => sessions || (sessions = createSessions(window));
 
 export const running = ref(false);
 export const emulatorError = ref(null);
@@ -50,6 +55,11 @@ export function play(host, rom, targetId) {
   const target = TARGETS[targetId] || TARGETS.sms;
   emulatorError.value = null;
 
+  // Before anything else: whatever was playing stops now, completely - and
+  // an emulator still loading for an earlier Play will be stopped the moment
+  // it arrives. See emulator-session.js.
+  const session = getSessions().begin();
+
   // Only the Master System core is bundled. EmulatorJS would otherwise reach
   // for the missing ColecoVision or MSX core on its own CDN, quietly - which
   // works online, fails offline, and says nothing either way.
@@ -58,6 +68,7 @@ export function play(host, rom, targetId) {
       `Playing ${target.label} games inside the editor is not supported yet. ` +
       'Your game built correctly: download the ROM and run it in a ' +
       `${target.label} emulator${target.needsBios ? ' (it will need a BIOS image)' : ''}.`;
+    getSessions().abandon(session);
     host.innerHTML = '';
     return () => {};
   }
@@ -77,6 +88,7 @@ export function play(host, rom, targetId) {
     url = URL.createObjectURL(new Blob([rom], {type: 'application/octet-stream'}));
   } catch (e) {
     emulatorError.value = `The emulator could not be started (${e.message}).`;
+    getSessions().abandon(session);
     running.value = false;
     return () => {
       host.innerHTML = '';
@@ -101,7 +113,12 @@ export function play(host, rom, targetId) {
 
   const script = document.createElement('script');
   script.src = `${emulatorBase()}loader.js`;
+  // The loader has done its job once it has run; leaving one tag per Play
+  // in the page is how they piled up.
+  script.onload = () => script.remove();
   script.onerror = () => {
+    getSessions().abandon(session);
+    script.remove();
     emulatorError.value =
       'The emulator could not be loaded. Your game built correctly: use ' +
       'Download ROM and run it in any emulator, or on real hardware.';
@@ -111,6 +128,7 @@ export function play(host, rom, targetId) {
   running.value = true;
 
   return () => {
+    getSessions().end(session);
     try {
       URL.revokeObjectURL(url);
     } catch {
