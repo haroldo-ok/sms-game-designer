@@ -195,6 +195,40 @@ to run them.
 
 EmulatorJS and the cores are GPL-3.0; see `public/emulator/LICENSE-EmulatorJS`.
 
+## Publishing it on GitHub Pages
+
+The published editor lives in `docs/`, which GitHub Pages serves as-is. Build
+straight into it with:
+
+```sh
+npm run build:docs     # build into docs/, git add -A docs, check it
+git commit -m "Deploy"
+git push
+```
+
+Then commit as usual. **Do not deploy with `git commit -a`** (or `git add -u`,
+or an editor's "commit tracked files"): those stage changes and deletions of
+files git already knows, and never add new ones. Webpack names the app bundle
+and its stylesheet after a hash, so a rebuild usually creates *new* files -
+sometimes even when the code has not changed - and a deploy committed that way
+deletes the old bundle without adding the new one. That is exactly how the
+published site once broke: `index.html` pointed at a bundle that was not in
+the repository.
+
+Two guards make that hard to repeat:
+
+- `npm run check:docs` (`tools/check-site.mjs`) follows everything the editor
+  will load - the scripts and stylesheets in `index.html`, every chunk the
+  bundle loads on demand, the compilers, the emulator file by file - and, in
+  a git work tree, lists any file git does not know about, with the command
+  that fixes it.
+- `.github/workflows/check-site.yml` runs the same check on every push, so a
+  broken `docs/` shows as a red cross on the commit.
+
+`.gitattributes` stores `docs/` byte for byte, so git's line-ending
+conversion cannot quietly change a built file between your machine and the
+site.
+
 ## Examples
 
 **Open → Examples** in the editor offers three working games: *Bug Blaster*

@@ -176,6 +176,18 @@ def main():
             fail(f'{core} contains no WebAssembly')
         shutil.rmtree(unpacked)
 
+    # One translation in the release has Windows line endings. Git converts
+    # those when a repository has autocrlf on, so the committed file stopped
+    # matching the manifest - harmless to the JSON, but a checker that cries
+    # wolf is a checker people ignore. Text is stored with LF endings, which
+    # is what git would store anyway.
+    for n in wanted:
+        if n.endswith(('.json', '.js', '.css', '.txt')):
+            path = os.path.join(work, n)
+            data = open(path, 'rb').read()
+            if b'\r\n' in data:
+                open(path, 'wb').write(data.replace(b'\r\n', b'\n'))
+
     # Lay it out under public/emulator/, flattening data/.
     if os.path.exists(DEST):
         shutil.rmtree(DEST)

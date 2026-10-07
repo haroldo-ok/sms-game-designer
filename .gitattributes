@@ -1,0 +1,9 @@
+# Built and vendored files are stored byte for byte. Git's line-ending
+# conversion rewrote a translation file inside the bundled emulator when it
+# was committed, so the published copy no longer matched its own manifest.
+# What is built is exactly what gets served.
+docs/**             -text
+public/emulator/**  -text
+public/wasm/**      -text
+*.wasm              binary
+*.data              binary

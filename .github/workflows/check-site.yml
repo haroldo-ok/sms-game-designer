@@ -1,0 +1,28 @@
+# Fails the commit if the published site in docs/ is incomplete.
+#
+# GitHub Pages serves docs/ exactly as committed. A deployment once rewrote
+# index.html to point at a newly named app bundle and left the bundle itself
+# out of the commit; the site 404'd on its own code and nothing said so.
+# This runs tools/check-site.mjs on every push and pull request, so the same
+# mistake shows as a red cross on the commit instead of a broken page.
+#
+# It needs nothing but Node: the checker has no dependencies.
+
+name: Check the published site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  docs:
+    name: docs/ is complete
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Every file the editor loads is present
+        run: node tools/check-site.mjs docs --no-git
