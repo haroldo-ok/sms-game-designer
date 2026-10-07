@@ -849,6 +849,44 @@ stand-in emulators: two Plays before either arrives, a Play ended before its
 emulator arrives, a Play whose loader failed. Breaking the arrival check on
 purpose fails exactly the two race tests.
 
+## The published site broke, and nothing said so
+
+The editor's GitHub Pages site 404'd on its own code. Reading the repository's
+history commit by commit told the whole story: every deployment after the
+first rewrote `index.html` to point at a newly named app bundle and deleted
+the old one - and only one of them added the new bundle. Files whose names
+had not changed were updated fine. That is the signature of committing with
+`git commit -a`, which stages changes and deletions of files git already
+knows and never adds new ones; webpack names the bundle and its stylesheet
+after a hash, so a rebuild usually makes new files. A scratch repository
+reproduced it exactly.
+
+Even unchanged code is not guaranteed a stable name. Two builds of identical
+source produced bundles whose code matched byte for byte and whose source
+maps differed only in the `file` field - the bundle's own name. So the answer
+is a process rather than a hope: `npm run build:docs` builds and runs
+`git add -A docs`, and two guards check the result.
+
+`tools/check-site.mjs` follows everything the editor will load, including the
+chunks only named in the chunk table inside the bundle (the compiler Worker,
+the examples), the compilers and the emulator file by file, and lists any
+file git does not know about. Run against the four real deployments it
+called each one correctly - complete, broken, complete, broken - including a
+stylesheet that had gone missing alongside the bundle in one of them. A
+GitHub Actions workflow runs it on every push.
+
+It also found a smaller fault. One translation file in the EmulatorJS
+release has Windows line endings; git converted them on commit, so the
+published file no longer matched its own manifest. Harmless to the JSON, but
+a checker that cries wolf gets ignored: vendoring now stores text with LF
+endings, `.gitattributes` keeps built files byte for byte, and a
+line-ending-only difference is reported as a note rather than a failure.
+
+The browser console also showed a run of "Permissions policy violation:
+unload" messages. They came from browser extensions - the stack frames name
+their content scripts - not from the editor; EmulatorJS's own listener uses
+`pagehide` wherever it exists.
+
 ## Reproducing
 
 ```sh
