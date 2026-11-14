@@ -1815,17 +1815,18 @@
       }
     }
   ],
+  "title": {
+    "text": "CAVERN RUN",
+    "subtitle": "MIND THE SPIKES",
+    "music": "title",
+    "gameOverMusic": "gameover"
+  },
   "rooms": [
     {
       "id": "cavern",
       "name": "Cavern 1",
       "music": "action",
       "bgPalette": 0,
-      "title": {
-        "text": "CAVERN RUN",
-        "subtitle": "MIND THE SPIKES",
-        "music": "title"
-      },
       "tiles": [
         [
           2,

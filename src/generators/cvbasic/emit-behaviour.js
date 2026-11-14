@@ -14,7 +14,7 @@
  * Behaviours run before `on update`, so a script can always correct one.
  */
 
-import {SFX_ORDER} from './emit-assets.js';
+import {sfxIndex} from './emit-assets.js';
 
 const SCREEN_BOTTOM = 191;
 const SCREEN_RIGHT = 255;
@@ -287,7 +287,7 @@ function shootBody(out, pad, target, ox, oy, interval, b, ir, bias) {
     out.push(`${pad}END IF`);
   }
   if (b.sound) {
-    out.push(`${pad}sfx_id = ${SFX_ORDER.indexOf(b.sound)}`);
+    out.push(`${pad}sfx_id = ${sfxIndex(ir, b.sound)}`);
     out.push(`${pad}sfx_t = 0`);
   }
   out.push(`${pad}e_timer(self) = ${interval}`);

@@ -21,6 +21,12 @@
  * Colour index 0 is transparent for sprites and is written as ".".
  */
 
+import {
+  BUILTIN_SFX, BUILTIN_TUNES, SFX_ORDER, TUNE_ORDER, sfxList, sfxBytes,
+  tuneList, voiceTokens,
+} from '../../ir/sound.js';
+import {tmsTileRows} from '../../ir/tms.js';
+
 const HEX = '0123456789ABCDEF';
 
 export function emitSpriteData(ir) {
@@ -75,6 +81,7 @@ function emitFrame(frame, width, height, out, tms) {
 export function emitTileData(ir) {
   const out = [];
   if (!ir.tiles.length) return out;
+  if (ir.target.video === 'tms') return emitTmsTileData(ir);
   out.push('\t\'');
   out.push('\t\' Background characters. 8x8, 32 bytes each on the SMS.');
   out.push('\t\'');
@@ -92,6 +99,35 @@ export function emitTileData(ir) {
       out.push(`\tBITMAP "${line}"`);
     }
   });
+  return out;
+}
+
+/**
+ * Background characters for the TMS9918: one bit per pixel, plus a colour
+ * table giving each row of each tile its two colours. See ir/tms.js for how
+ * sixteen-colour art becomes that.
+ */
+function emitTmsTileData(ir) {
+  const out = [];
+  const colour = [];
+  const pal = (ir.palette && ir.palette.background) || [];
+  out.push('\t\'');
+  out.push('\t\' Background characters. 8x8, one bit per pixel; tile_colour');
+  out.push('\t\' gives each row its foreground and background colour.');
+  out.push('\t\'');
+  out.push('tile_data:');
+  ir.tiles.forEach((tile, i) => {
+    const rows = tmsTileRows(tile, pal);
+    out.push(`\t' tile ${i}${tile.name ? ' - ' + tile.name : ''}`);
+    rows.forEach((r) => {
+      out.push(`\tBITMAP "${r.bits.map((b) => (b ? 'X' : '.')).join('')}"`);
+    });
+    colour.push(`\tDATA BYTE ${rows.map((r) =>
+      '$' + ((r.fg << 4) | r.bg).toString(16).padStart(2, '0')).join(',')}`);
+  });
+  out.push('');
+  out.push('tile_colour:');
+  colour.forEach((l) => out.push(l));
   return out;
 }
 
@@ -160,138 +196,93 @@ export function emitAnimTables(ir) {
 }
 
 /**
- * Sound effect envelopes.
- *
- * Built in rather than authored, at least for now: a beginner needs a shot,
- * a pickup and an explosion long before they need an envelope editor, and
- * five good defaults get a game feeling alive in the first ten minutes.
+ * Sound effect envelopes: the five built-ins, then the project's own.
  *
  * Three bytes per step - frequency low, frequency high, volume - with bit 7
  * of the volume byte selecting the noise channel and 255 ending the effect.
- * The PSG divider for a tone is 3579545 / 32 / frequency.
+ * The definitions and the byte layout live in ir/sound.js, because the
+ * editor previews from the same description.
  */
-export const SFX = {
-  shoot: sweep(1400, 400, 6, 12),
-  pickup: steps([[880, 10], [1320, 11], [1760, 12], [1760, 6]]),
-  explode: noise([14, 13, 12, 10, 9, 7, 6, 4, 3, 2, 1]),
-  jump: sweep(300, 900, 5, 8),
-  hurt: sweep(500, 90, 7, 16),
-};
-
-export const SFX_ORDER = ['shoot', 'pickup', 'explode', 'jump', 'hurt'];
-
-function divider(hz) {
-  return Math.max(1, Math.min(1023, Math.round(3579545 / 32 / hz)));
-}
-
-/** A glide from one pitch to another, fading out. */
-function sweep(from, to, vol, n) {
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    const hz = from + ((to - from) * i) / (n - 1);
-    const d = divider(hz);
-    out.push([d & 255, d >> 8, Math.max(0, Math.round(vol * (1 - i / n)))]);
-  }
-  return out;
-}
-
-/** Explicit pitch/volume steps. */
-function steps(list) {
-  return list.map(([hz, vol]) => {
-    const d = divider(hz);
-    return [d & 255, d >> 8, vol];
-  });
-}
-
-/** White noise on channel 3, fading. Control 4 is periodic white noise. */
-function noise(vols) {
-  return vols.map((v) => [4, 0, 128 | v]);
-}
-
-export function emitSfxData() {
+export function emitSfxData(ir) {
   const out = ['\t\''];
   out.push('\t\' Sound effects: three bytes a step, 255 volume ends one.');
-  out.push('\t\' Tones go to PSG channel 2 and noise to channel 3, leaving');
-  out.push('\t\' channels 0 and 1 for the music player.');
+  if (ir && ir.target.sound === 'ay') {
+    out.push('\t\' They play on AY channel C, leaving A and B for the music');
+    out.push('\t\' player.');
+  } else {
+    out.push('\t\' Tones go to PSG channel 2 and noise to channel 3, leaving');
+    out.push('\t\' channels 0 and 1 for the music player.');
+  }
   out.push('\t\'');
+  const sounds = (ir && ir.sounds) || sfxList(null);
   const offsets = [];
   const bytes = [];
-  SFX_ORDER.forEach((name) => {
+  const starts = [];
+  sounds.forEach((sfx) => {
     offsets.push(bytes.length);
-    SFX[name].forEach((step) => bytes.push(...step));
-    bytes.push(0, 0, 255);
+    starts.push({at: bytes.length, name: sfx.name});
+    bytes.push(...sfxBytes(sfx));
   });
-  if (bytes.length > 255) {
-    throw new Error('sound effect data exceeds 255 bytes; sfx_ofs needs a ' +
-      '16-bit index');
-  }
-  out.push(`sfx_ofs:\tDATA BYTE ${offsets.join(',')}`);
-  for (let i = 0; i < bytes.length; i += 15) {
-    out.push(`${i === 0 ? 'sfx_data:' : ''}\tDATA BYTE ${bytes.slice(i, i + 15).join(',')}`);
-  }
+  // 16-bit offsets (a label starting with # is a word table in CVBasic).
+  // Byte offsets ran out at 255 bytes, which is the five built-ins plus
+  // about two effects of the project's own.
+  out.push(`#sfx_ofs:\tDATA ${offsets.join(',')}`);
+  let first = true;
+  starts.forEach((start, n) => {
+    const end = n + 1 < starts.length ? starts[n + 1].at : bytes.length;
+    out.push(`\t' ${n}: ${String(start.name).replace(/[^\x20-\x7e]/g, '?')}`);
+    for (let i = start.at; i < end; i += 15) {
+      out.push(`${first ? 'sfx_data:' : ''}\tDATA BYTE ` +
+        bytes.slice(i, Math.min(end, i + 15)).join(','));
+      first = false;
+    }
+  });
   return out;
 }
 
 /**
- * Built-in tunes.
- *
- * A tracker is the right long-term answer, but a game with no music at all
- * feels dead, and nobody's first ten minutes should be spent entering notes.
- * These three cover the shape of a game: a title loop, something to play
- * under the action, and a short sting when you lose.
- *
- * Each voice is a space-separated list of tokens in CVBasic's own notation -
- * `C4` for a note, `S` to sustain the previous one, `-` for silence - so the
- * generated source stays readable and a user who outgrows this can edit it
- * by hand. Instrument letters (W piano, X clarinet, Y flute, Z bass) carry
- * over within a channel until changed.
- *
- * Two voices, not three: PLAY SIMPLE NO DRUMS leaves channel 2 and the noise
- * channel free, which is exactly what the sound effect player uses. Music and
- * effects therefore never cut each other off.
+ * An effect's index in the table, by key. An effect that no longer exists -
+ * deleted while a block still names it - plays the first one rather than
+ * indexing off the end of the table; the lint reports it.
  */
-export const TUNES = {
-  title: {
-    tempo: 9,
-    loop: true,
-    lead: 'C4W S E4 S G4 S C5 S G4 S E4 S F4 S A4 S ' +
-      'G4 S E4 S C4 S - - - -',
-    bass: 'C3Z S S S G3 S S S C3 S S S F3 S S S ' +
-      'C3 S S S G3 S S S C3 S S S - -',
-  },
-  action: {
-    tempo: 6,
-    loop: true,
-    lead: 'A4X S C5 S E5 S C5 S A4 S C5 S D5 S C5 S ' +
-      'G4 S B4 S D5 S B4 S G4 S B4 S C5 S B4 S',
-    bass: 'A2Z S S S A2 S S S F2 S S S F2 S S S ' +
-      'G2 S S S G2 S S S E2 S S S E2 S S S',
-  },
-  gameover: {
-    tempo: 12,
-    loop: false,
-    lead: 'G4W S S F4 S S D4# S S C4 S S S S',
-    bass: 'C3Z S S A2# S S G2# S S C2 S S S S',
-  },
-};
+export function sfxIndex(ir, key) {
+  const sounds = (ir && ir.sounds) || sfxList(null);
+  const i = sounds.findIndex((s) => s.key === key);
+  return i < 0 ? 0 : i;
+}
 
-export const TUNE_ORDER = Object.keys(TUNES);
+// Kept for anything that imported them from here before sound moved.
+export const SFX = BUILTIN_SFX;
+export const TUNES = BUILTIN_TUNES;
+export {SFX_ORDER, TUNE_ORDER};
 
+/**
+ * Tunes: only the ones this project plays, built-in or its own.
+ *
+ * Two voices, not three: PLAY SIMPLE NO DRUMS leaves the third tone channel
+ * and the noise channel free, which is exactly what the sound effect player
+ * uses. Music and effects therefore never cut each other off.
+ */
 export function emitMusicData(ir) {
   const out = [];
   const used = ir.music || [];
   if (!used.length) return out;
   out.push('\t\'');
-  out.push('\t\' Music. Two voices, so channel 2 and the noise channel stay');
-  out.push('\t\' free for sound effects. Tempo is ticks per note at 50 Hz.');
+  out.push('\t\' Music. Two voices, so the third tone channel and the noise');
+  out.push('\t\' channel stay free for sound effects. Tempo is ticks per note');
+  out.push('\t\' at 50 Hz.');
   out.push('\t\'');
-  used.forEach((name) => {
-    const tune = TUNES[name];
+  const tunes = ir.tunes || tuneList(null);
+  used.forEach((key) => {
+    const tune = tunes.find((t) => t.key === key);
     if (!tune) return;
-    const lead = tune.lead.trim().split(/\s+/);
-    const bass = tune.bass.trim().split(/\s+/);
+    const lead = voiceTokens(tune.lead);
+    const bass = voiceTokens(tune.bass);
     const rows = Math.max(lead.length, bass.length);
-    out.push(`music_${name}:`);
+    if (!tune.builtin) {
+      out.push(`\t' ${String(tune.name).replace(/[^\x20-\x7e]/g, '?')}`);
+    }
+    out.push(`music_${key}:`);
     out.push(`\tDATA BYTE ${tune.tempo}`);
     for (let i = 0; i < rows; i++) {
       out.push(`\tMUSIC ${lead[i] || '-'},${bass[i] || '-'}`);

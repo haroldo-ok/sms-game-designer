@@ -10,7 +10,7 @@
       >
         <span class="nm">{{ a.name }}</span>
         <span class="meta">{{ a.group }} · {{ a.max }}</span>
-        <v-icon v-if="a.isPlayer" x-small class="star">mdi-star</v-icon>
+        <v-icon v-if="a.isPlayer" x-small class="star">$star</v-icon>
       </div>
       <v-btn small text block @click="addActor()">+ actor type</v-btn>
       <v-btn

@@ -33,15 +33,21 @@ import {blame} from '../generators/blame.js';
 import engineCore from '!!raw-loader!../../engine/core.bas';
 import engineKernel from '!!raw-loader!../../engine/kernel.bas';
 import engineTerrain from '!!raw-loader!../../engine/terrain.bas';
+import engineTerrainRom from '!!raw-loader!../../engine/terrain_rom.bas';
 import engineRenderSms from '!!raw-loader!../../engine/render_sms.bas';
 import engineRenderTms from '!!raw-loader!../../engine/render_tms.bas';
+import engineSfxSn from '!!raw-loader!../../engine/sfx_sn.bas';
+import engineSfxAy from '!!raw-loader!../../engine/sfx_ay.bas';
 
 const ENGINE = {
   'core.bas': engineCore,
   'kernel.bas': engineKernel,
   'terrain.bas': engineTerrain,
+  'terrain_rom.bas': engineTerrainRom,
   'render_sms.bas': engineRenderSms,
   'render_tms.bas': engineRenderTms,
+  'sfx_sn.bas': engineSfxSn,
+  'sfx_ay.bas': engineSfxAy,
 };
 
 let worker = null;

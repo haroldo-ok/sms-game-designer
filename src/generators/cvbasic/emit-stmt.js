@@ -12,7 +12,7 @@
  * mean rewriting every block.
  */
 
-import {SFX_ORDER} from './emit-assets.js';
+import {sfxIndex} from './emit-assets.js';
 
 const FLAG = {NEW: 1, DYING: 2, HFLIP: 4, HIDDEN: 8, ANIMEND: 16};
 
@@ -193,8 +193,7 @@ function emitStmt(s, ctx, out) {
     case 'playSound': {
       // Restarting an effect that is already playing is the right default:
       // rapid fire should sound like rapid fire, not like one long note.
-      const i = SFX_ORDER.indexOf(s.sound);
-      out.push(`${pad}sfx_id = ${i < 0 ? 0 : i}`);
+      out.push(`${pad}sfx_id = ${sfxIndex(ctx.ir, s.sound)}`);
       out.push(`${pad}sfx_t = 0`);
       break;
     }

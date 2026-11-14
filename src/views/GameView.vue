@@ -1,5 +1,49 @@
 <template>
   <div class="game-view">
+    <section class="title-screen">
+      <h4>Title screen</h4>
+      <p class="note">
+        Shown when the game starts and again after a game over. Leave the
+        name empty to use the project's name. Text is drawn in capitals,
+        30 characters to a line.
+      </p>
+      <div class="row">
+        <v-text-field
+          v-model="title.text"
+          dense
+          hide-details
+          label="Name"
+          maxlength="30"
+          :placeholder="project.name"
+          class="title-text-field"
+        />
+        <v-text-field
+          v-model="title.subtitle"
+          dense
+          hide-details
+          label="Second line"
+          maxlength="30"
+        />
+      </div>
+      <div class="row">
+        <v-select
+          v-model="title.music"
+          :items="tuneItems"
+          dense
+          hide-details
+          label="Title music"
+          class="title-music"
+        />
+        <v-select
+          v-model="title.gameOverMusic"
+          :items="tuneItems"
+          dense
+          hide-details
+          label="Game over music"
+        />
+      </div>
+    </section>
+
     <section>
       <h4>Globals</h4>
       <p class="note">
@@ -26,7 +70,7 @@
           label="Starts at"
         />
         <v-btn icon small @click="project.globals.splice(i, 1)">
-          <v-icon small>mdi-close</v-icon>
+          <v-icon small>$close</v-icon>
         </v-btn>
       </div>
       <v-btn x-small text @click="addGlobal">+ global</v-btn>
@@ -60,7 +104,10 @@
 
 <script>
 import BlocklyWorkspace from '../components/BlocklyWorkspace.vue';
+import {computed} from '@vue/composition-api';
+
 import {project, scriptFor} from '../hooks/project.js';
+import {tuneList} from '../ir/sound.js';
 
 export default {
   name: 'GameView',
@@ -69,6 +116,17 @@ export default {
   setup() {
     return {
       project,
+      // Every project has a title object after migration; a project swapped
+      // in some other way gets one the first time this is read.
+      title: computed(() => {
+        if (!project.value.title) {
+          project.value.title = {text: '', subtitle: '', music: null,
+            gameOverMusic: null};
+        }
+        return project.value.title;
+      }),
+      tuneItems: computed(() => [{text: 'none', value: null},
+        ...tuneList(project.value).map((t) => ({text: t.name, value: t.key}))]),
       script: (name) => scriptFor(project.value, name),
       addGlobal: () => project.value.globals.push(
           {name: `value${project.value.globals.length}`, width: 8, initial: 0}),

@@ -46,10 +46,17 @@ const {lint} = await import('../src/ir/lint.js');
 let passed = 0;
 let failed = 0;
 
-function test(name, fn) {
+/**
+ * Awaited, and every call below awaits it. This used to be synchronous while
+ * a third of the tests were async: those were reported "ok" the moment they
+ * returned a promise, before a single assertion in them had run, and a
+ * failure in one surfaced - if at all - as an unhandled rejection after the
+ * totals were printed.
+ */
+async function test(name, fn) {
   try {
     store.newProject('Test');
-    fn();
+    await fn();
     passed++;
     console.log(`  ok    ${name}`);
   } catch (e) {
@@ -67,14 +74,14 @@ const p = () => store.project.value;
 
 console.log('\nactors');
 
-test('the first actor created becomes the player', () => {
+await test('the first actor created becomes the player', () => {
   const a = store.addActor('Ship');
   assert(a.isPlayer, 'the first actor is not the player');
   assert(a.max === 1, `the player has Max instances ${a.max}`);
   assert(a.group === 'player', `the player is in group ${a.group}`);
 });
 
-test('later actors do not steal the player flag', () => {
+await test('later actors do not steal the player flag', () => {
   store.addActor('Ship');
   const b = store.addActor('Bug');
   assert(!b.isPlayer, 'the second actor took the player flag');
@@ -82,7 +89,7 @@ test('later actors do not steal the player flag', () => {
       'more than one actor is flagged as the player');
 });
 
-test('exactly one actor can be the player', () => {
+await test('exactly one actor can be the player', () => {
   const a = store.addActor('Ship');
   const b = store.addActor('Bug');
   store.setPlayer(b.id);
@@ -91,7 +98,7 @@ test('exactly one actor can be the player', () => {
       'setPlayer left two players');
 });
 
-test('actor ids are unique even after deletions', () => {
+await test('actor ids are unique even after deletions', () => {
   const ids = new Set();
   for (let i = 0; i < 4; i++) ids.add(store.addActor(`A${i}`).id);
   store.removeActor([...ids][1]);
@@ -102,7 +109,7 @@ test('actor ids are unique even after deletions', () => {
 
 console.log('\ndeleting an actor takes its references with it');
 
-test('placements of a deleted actor are removed', () => {
+await test('placements of a deleted actor are removed', () => {
   const ship = store.addActor('Ship');
   const bug = store.addActor('Bug');
   p().rooms[0].placements = [
@@ -116,7 +123,7 @@ test('placements of a deleted actor are removed', () => {
   assert(left.includes(ship.id), 'the wrong placement was removed');
 });
 
-test('a Shoot behaviour aimed at a deleted actor is removed', () => {
+await test('a Shoot behaviour aimed at a deleted actor is removed', () => {
   const ship = store.addActor('Ship');
   const shot = store.addActor('Shot');
   ship.behaviours = [
@@ -130,7 +137,7 @@ test('a Shoot behaviour aimed at a deleted actor is removed', () => {
       'unrelated behaviours were removed too');
 });
 
-test('a spawn block aimed at a deleted actor is reported, not silently dropped', () => {
+await test('a spawn block aimed at a deleted actor is reported, not silently dropped', () => {
   // A reference buried inside a script rather than in a list the editor
   // already walks. Placements and Shoot behaviours are structural and get
   // removed with the actor; a spawn block is something the user wrote, so it
@@ -164,7 +171,7 @@ test('a spawn block aimed at a deleted actor is reported, not silently dropped',
       'the nested spawn inside an if block was missed');
 });
 
-test('a project with a deleted actor still builds cleanly', () => {
+await test('a project with a deleted actor still builds cleanly', () => {
   const ship = store.addActor('Ship');
   ship.animations[0].frames = [blank(16, 16)];
   const shot = store.addActor('Shot');
@@ -188,7 +195,7 @@ function blank(w, h) {
 
 console.log('\nbudgets and limits');
 
-test('fields stop at the target budget', () => {
+await test('fields stop at the target budget', () => {
   const a = store.addActor('Ship');
   const added = [];
   for (let i = 0; i < 8; i++) {
@@ -199,7 +206,7 @@ test('fields stop at the target budget', () => {
       `${added.length} fields accepted, the SMS budget is 4 slots`);
 });
 
-test('a 16-bit field costs two slots', () => {
+await test('a 16-bit field costs two slots', () => {
   const a = store.addActor('Ship');
   const big = store.addField(a, 'score');
   big.width = 16;
@@ -210,14 +217,14 @@ test('a 16-bit field costs two slots', () => {
       'a fourth field was accepted even though a 16-bit one costs two slots');
 });
 
-test('the last room cannot be deleted', () => {
+await test('the last room cannot be deleted', () => {
   assert(p().rooms.length === 1, 'a new project should start with one room');
   store.removeRoom(p().rooms[0].id);
   assert(p().rooms.length === 1,
       'the only room was deleted, leaving nowhere for the game to start');
 });
 
-test('deleting a room moves the selection somewhere valid', () => {
+await test('deleting a room moves the selection somewhere valid', () => {
   const b = store.addRoom('Second');
   store.removeRoom(b.id);
   assert(p().rooms.some((r) => r.id === store.selectedRoom.value),
@@ -226,7 +233,7 @@ test('deleting a room moves the selection somewhere valid', () => {
 
 console.log('\nediting');
 
-test('adding a frame copies the last one rather than starting blank', () => {
+await test('adding a frame copies the last one rather than starting blank', () => {
   // People animate by nudging, not by redrawing.
   const a = store.addActor('Ship');
   const anim = a.animations[0];
@@ -240,7 +247,7 @@ test('adding a frame copies the last one rather than starting blank', () => {
       'the frames share the same pixel array, so editing one edits both');
 });
 
-test('scripts are created on demand and kept', () => {
+await test('scripts are created on demand and kept', () => {
   const a = store.addActor('Ship');
   const s = store.scriptFor(a, 'update');
   assert(s && Array.isArray(s.stmts), 'no script was created');
@@ -253,7 +260,7 @@ test('scripts are created on demand and kept', () => {
 
 console.log('\npersistence');
 
-test('a project survives a save and a reload', async () => {
+await test('a project survives a save and a reload', async () => {
   const a = store.addActor('Ship');
   a.name = 'Interceptor';
   p().name = 'Round Trip';
@@ -267,7 +274,7 @@ test('a project survives a save and a reload', async () => {
       `actor came back as ${back.actors[0].name}`);
 });
 
-test('an export round-trips through the zip', async () => {
+await test('an export round-trips through the zip', async () => {
   const a = store.addActor('Ship');
   a.name = 'Interceptor';
   store.addField(a, 'hp');
@@ -288,7 +295,7 @@ test('an export round-trips through the zip', async () => {
   assert(buildIR(back).types.length === 1, 'the reloaded project has no types');
 });
 
-test('a corrupt autosave does not lose the editor', async () => {
+await test('a corrupt autosave does not lose the editor', async () => {
   global.localStorage.setItem('sms-game-designer:project', '{not json at all');
   const {migrate} = await import('../src/ir/schema.js');
   let recovered = null;
@@ -304,7 +311,7 @@ test('a corrupt autosave does not lose the editor', async () => {
 
 console.log('\ntiles');
 
-test('a new project can paint straight away', () => {
+await test('a new project can paint straight away', () => {
   // It used to start with no tiles, so "Paint tiles" painted references to
   // a tile that did not exist.
   const tiles = p().tiles;
@@ -315,7 +322,7 @@ test('a new project can paint straight away', () => {
   assert(tiles.some((t) => t.attr & 2), 'no hazard tile');
 });
 
-test('an old project with no tiles gets the starter set', async () => {
+await test('an old project with no tiles gets the starter set', async () => {
   const {migrate} = await import('../src/ir/schema.js');
   const old = {schemaVersion: 3, name: 'Old', actors: [], globals: [],
     tiles: [],
@@ -328,7 +335,7 @@ test('an old project with no tiles gets the starter set', async () => {
   assert(!problems.length, 'migrated project still reports missing tiles');
 });
 
-test('duplicating a tile copies its art and its meaning', () => {
+await test('duplicating a tile copies its art and its meaning', () => {
   const n = p().tiles.length;
   const i = store.addTile(1);
   assert(i === n, `new tile index ${i}, expected ${n}`);
@@ -338,12 +345,12 @@ test('duplicating a tile copies its art and its meaning', () => {
       'the copy shares its pixel rows with the original');
 });
 
-test('a copy of tile 0 is not forced to be empty', () => {
+await test('a copy of tile 0 is not forced to be empty', () => {
   const i = store.addTile(0);
   assert(p().tiles[i].attr === 0 && i > 0, 'copying tile 0 went wrong');
 });
 
-test('deleting a tile remaps every room that uses later tiles', () => {
+await test('deleting a tile remaps every room that uses later tiles', () => {
   // Rooms store indices. Removing tile 2 turns every 3 into a 2 - unless the
   // rooms are remapped, the whole map shifts onto the wrong art.
   const tiles = p().tiles;
@@ -365,7 +372,7 @@ test('deleting a tile remaps every room that uses later tiles', () => {
       'the cells point at indices that no longer hold the same art');
 });
 
-test('tile 0 cannot be deleted', () => {
+await test('tile 0 cannot be deleted', () => {
   const n = p().tiles.length;
   assert(!store.removeTile(0), 'removeTile accepted tile 0');
   assert(p().tiles.length === n, 'a tile disappeared anyway');
@@ -373,7 +380,7 @@ test('tile 0 cannot be deleted', () => {
 
 console.log('\nopening a project');
 
-test('an example opens as the current project', async () => {
+await test('an example opens as the current project', async () => {
   const {readFileSync} = await import('fs');
   const {join} = await import('path');
   const data = JSON.parse(readFileSync(join(root, 'examples/shmup.json'), 'utf8'));
@@ -388,7 +395,7 @@ test('an example opens as the current project', async () => {
   assert(store.selectedRoom.value === p().rooms[0].id, 'no room selected');
 });
 
-test('opening an example does not alter the bundled copy', async () => {
+await test('opening an example does not alter the bundled copy', async () => {
   const {readFileSync} = await import('fs');
   const {join} = await import('path');
   const data = JSON.parse(readFileSync(join(root, 'examples/platformer.json'), 'utf8'));
@@ -401,7 +408,7 @@ test('opening an example does not alter the bundled copy', async () => {
 
 console.log('\nthe rename');
 
-test('work autosaved under the old name is still there after the rename', async () => {
+await test('work autosaved under the old name is still there after the rename', async () => {
   // The tool was renamed from "SMS Game Maker". Its autosave key had the old
   // name in it, so without carrying it across, the first launch afterwards
   // would open an empty project - indistinguishable from losing the work.
@@ -423,7 +430,7 @@ test('work autosaved under the old name is still there after the rename', async 
       'the old autosave was removed, so going back to an older build loses it');
 });
 
-test('a new autosave wins over an old one', async () => {
+await test('a new autosave wins over an old one', async () => {
   global.localStorage.setItem('sms-game-maker:project',
       JSON.stringify({...p(), name: 'Stale'}));
   global.localStorage.setItem('sms-game-designer:project',
@@ -433,10 +440,200 @@ test('a new autosave wins over an old one', async () => {
       `opened "${fresh.project.value.name}"; an old copy overrode newer work`);
 });
 
-test('project files from before the rename still open', () => {
+await test('project files from before the rename still open', () => {
   assert(store.LEGACY_PROJECT_EXTS.includes('.smsgm'),
       'the old .smsgm extension is no longer recognised');
   assert(store.PROJECT_EXT === '.smsgd', `projects save as ${store.PROJECT_EXT}`);
+});
+
+console.log('\nundo and redo');
+
+const settle = () => new Promise((r) => setTimeout(r, 420));
+
+await test('an edit can be undone and redone', async () => {
+  store.recordHistory();
+  store.addActor('Ship');
+  await settle();
+  assert(store.canUndo.value, 'nothing to undo after adding an actor');
+  assert(store.undo(), 'undo did nothing');
+  assert(p().actors.length === 0, 'the actor is still there after undo');
+  assert(store.canRedo.value, 'nothing to redo after an undo');
+  assert(store.redo(), 'redo did nothing');
+  assert(p().actors.length === 1 && p().actors[0].name === 'Ship',
+      'redo did not bring the actor back');
+});
+
+await test('undo straight after an edit undoes that edit, not two', async () => {
+  store.recordHistory();
+  store.addActor('One');
+  await settle();
+  store.addActor('Two');
+  // No wait: the second edit has not been snapshotted yet.
+  store.undo();
+  assert(p().actors.length === 1 && p().actors[0].name === 'One',
+      `undo left ${p().actors.map((a) => a.name).join(', ') || 'nothing'}`);
+});
+
+await test('a burst of edits is one step to undo', async () => {
+  store.recordHistory();
+  const a = store.addActor('Ship');
+  await settle();
+  const before = JSON.stringify(a.animations[0].frames[0].pixels);
+  // A stroke of the pixel editor: many small changes in quick succession.
+  const live = p().actors[0];
+  for (let x = 0; x < 12; x++) {
+    live.animations[0].frames[0].pixels[3].splice(x, 1, 5);
+  }
+  await settle();
+  store.undo();
+  assert(JSON.stringify(p().actors[0].animations[0].frames[0].pixels) === before,
+      'one undo did not take back the whole stroke');
+  assert(p().actors.length === 1, 'undo went back further than the stroke');
+});
+
+await test('a new edit after an undo discards what could be redone', async () => {
+  store.recordHistory();
+  store.addActor('One');
+  await settle();
+  store.undo();
+  // Editors reload after an undo; give the store a moment to stop ignoring
+  // their echoes, as a person's next edit would.
+  await new Promise((r) => setTimeout(r, 340));
+  store.addActor('Other');
+  await settle();
+  assert(!store.canRedo.value, 'redo is still offered after a new edit');
+  assert(!store.redo(), 'redo brought back a discarded future');
+  assert(p().actors[0].name === 'Other', 'the new edit was lost');
+});
+
+await test('undo keeps the selection on something that exists', async () => {
+  store.recordHistory();
+  store.addActor('One');
+  await settle();
+  const two = store.addActor('Two');
+  await settle();
+  assert(store.selectedActor.value === two.id, 'the new actor is not selected');
+  store.undo();
+  assert(p().actors.some((a) => a.id === store.selectedActor.value),
+      `the selection points at ${store.selectedActor.value}, which is gone`);
+});
+
+await test('opening an example can be undone', async () => {
+  store.addActor('Mine');
+  await settle();
+  store.openProject({name: 'Example', actors: [], rooms: [{name: 'R'}]});
+  await settle();
+  store.undo();
+  assert(p().actors.length === 1 && p().actors[0].name === 'Mine',
+      'the project that was open before is not back');
+});
+
+console.log('\nsound');
+
+await test('a new sound starts as a copy of a built-in', () => {
+  const s = store.addSound('explode');
+  assert(s.wave === 'noise' && s.steps.length > 4,
+      `copied as ${s.wave} with ${s.steps.length} steps`);
+  assert(/^sfx_\d+$/.test(s.id), `id is ${s.id}`);
+  const t = store.addSound('explode');
+  assert(t.id !== s.id && t.name !== s.name, 'two sounds share an id or a name');
+});
+
+await test('an authored sound and tune build, and can be named by blocks', () => {
+  const ship = store.addActor('Ship');
+  const s = store.addSound('shoot');
+  const t = store.addTune();
+  p().title.music = t.id;
+  ship.scripts.create = {xml: '', stmts: [
+    {op: 'playSound', sound: s.id, blockId: 'b1'},
+    {op: 'playMusic', music: t.id, blockId: 'b2'}]};
+  p().rooms[0].placements.push({actor: ship.id, x: 40, y: 40});
+  const ir = buildIR(p());
+  const errors = [...ir.diagnostics, ...lint(ir)].filter((d) => d.severity === 'error');
+  assert(!errors.length, errors.map((e) => e.message).join(' / '));
+  assert(ir.sounds.findIndex((x) => x.key === s.id) === 5,
+      'the authored sound is not the sixth entry in the table');
+  assert(ir.music.includes(t.id), 'the authored tune was not collected');
+});
+
+await test('deleting a tune stops the rooms and the title that played it', () => {
+  const t = store.addTune();
+  p().rooms[0].music = t.id;
+  p().title.music = t.id;
+  store.removeTune(t.id);
+  assert(p().rooms[0].music === null, 'a room still names the deleted tune');
+  assert(p().title.music === null, 'the title still names the deleted tune');
+  const ir = buildIR(p());
+  assert(!lint(ir).some((d) => d.code === 'unknown-tune'),
+      'the project no longer builds after deleting a tune');
+});
+
+await test('a block naming a deleted tune is reported, not silently dropped', () => {
+  const ship = store.addActor('Ship');
+  const t = store.addTune();
+  ship.scripts.create = {xml: '', stmts: [
+    {op: 'playMusic', music: t.id, blockId: 'b2'}]};
+  store.removeTune(t.id);
+  const problems = lint(buildIR(p()));
+  assert(problems.some((d) => d.code === 'unknown-tune' && d.severity === 'error'),
+      'nothing reported the dangling play music block');
+});
+
+console.log('\nexporting');
+
+await test('the source zip says how to build for the project\'s own console', () => {
+  const sms = store.sourceReadme('game', 'sms');
+  assert(/cvbasic --sms game\.bas game\.asm/.test(sms) &&
+    /gasm80 game\.asm -o game\.sms -sms/.test(sms), sms);
+  const sg = store.sourceReadme('game', 'sg1000');
+  assert(/cvbasic --sg1000 game\.bas/.test(sg) && /-o game\.sg\b/.test(sg) &&
+    !/-sms/.test(sg), `SG-1000 instructions build something else:\n${sg}`);
+  const cv = store.sourceReadme('game', 'coleco');
+  assert(/cvbasic game\.bas game\.asm/.test(cv) && /-o game\.rom/.test(cv),
+      `ColecoVision instructions are wrong:\n${cv}`);
+});
+
+await test('a playable web page contains everything it loads', async () => {
+  const {readFileSync, existsSync} = await import('fs');
+  const {buildPlayable, manifestFiles} =
+    await import('../src/hooks/export-playable.js');
+  const {TARGETS} = await import('../src/ir/schema.js');
+  const dir = resolve(root, 'public/emulator');
+  const zip = await buildPlayable({
+    rom: new Uint8Array([0xF3, 0xC3, 0, 0]),
+    target: TARGETS.sg1000,
+    title: 'Tom & "Jerry" <1>',
+    read: async (path) => readFileSync(resolve(dir, path)),
+  });
+  const names = Object.keys(zip.files);
+  assert(names.includes('game.sg'), 'the ROM is missing or misnamed');
+  const page = await zip.file('index.html').async('string');
+  assert(/EJS_gameUrl = "game\.sg"/.test(page), 'the page loads a different ROM');
+  assert(/EJS_core = "segaMS"/.test(page), 'the page asks for the wrong core');
+  assert(/<title>Tom &amp; &quot;Jerry&quot; &lt;1&gt;<\/title>/.test(page),
+      'the game\'s name is not escaped in the page');
+  assert(!/https?:\/\//.test(page), 'the page refers to another site');
+  const wanted = manifestFiles(readFileSync(resolve(dir, 'MANIFEST.txt'), 'utf8'));
+  assert(wanted.length > 20, `the manifest lists only ${wanted.length} files`);
+  wanted.forEach((f) => {
+    assert(existsSync(resolve(dir, f)), `${f} is in the manifest but not on disk`);
+    assert(names.includes(`emulator/${f}`), `emulator/${f} is not in the zip`);
+  });
+  assert(names.includes('emulator/LICENSE-EmulatorJS'),
+      'the emulator\'s licence does not travel with it');
+});
+
+await test('a playable page is refused for a console with no bundled emulator', async () => {
+  const {buildPlayable} = await import('../src/hooks/export-playable.js');
+  const {TARGETS} = await import('../src/ir/schema.js');
+  let message = null;
+  try {
+    await buildPlayable({rom: new Uint8Array(4), target: TARGETS.msx,
+      title: 'x', read: async () => ''});
+  } catch (e) {
+    message = e.message;
+  }
+  assert(message && /MSX/.test(message), `it was not refused: ${message}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

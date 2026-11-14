@@ -444,6 +444,38 @@ test('a workspace survives a save and reload', () => {
       `a round-trip through XML changed the program:\n  ${before}\n  ${after}`);
 });
 
+test('sounds and tunes made in the editor appear in their blocks', () => {
+  // The lists used to be written into the block definitions: five effects
+  // and three tunes, whatever the project had.
+  project.sounds = [{id: 'sfx_1', name: 'zap', wave: 'tone',
+    steps: [{hz: 900, vol: 9}]}];
+  project.music = [{id: 'tune_1', name: 'my march', tempo: 6, loop: true,
+    lead: 'C4 S', bass: '- -'}];
+  ctx.sounds = () => project.sounds;
+  ctx.music = () => project.music;
+  const ws = new Blockly.Workspace();
+  const sound = ws.newBlock('sms_play_sound');
+  const options = sound.getField('SFX').getOptions(false).map((o) => o[1]);
+  assert(options.join() === 'shoot,pickup,explode,jump,hurt,sfx_1',
+      `play sound offers: ${options.join()}`);
+  sound.setFieldValue('sfx_1', 'SFX');
+  const music = ws.newBlock('sms_play_music');
+  const tunes = music.getField('TUNE').getOptions(false).map((o) => o[1]);
+  assert(tunes.join() === 'title,action,gameover,tune_1',
+      `play music offers: ${tunes.join()}`);
+  music.setFieldValue('tune_1', 'TUNE');
+  sound.nextConnection.connect(music.previousConnection);
+  const stmts = stripIds(lowerWorkspace(ws));
+  ws.dispose();
+  assert(JSON.stringify(stmts).includes('"sound":"sfx_1"') &&
+    JSON.stringify(stmts).includes('"music":"tune_1"'),
+  `lowered to ${JSON.stringify(stmts)}`);
+  delete ctx.sounds;
+  delete ctx.music;
+  project.sounds = [];
+  project.music = [];
+});
+
 function stripIds(node) {
   if (Array.isArray(node)) return node.map(stripIds);
   if (!node || typeof node !== 'object') return node;

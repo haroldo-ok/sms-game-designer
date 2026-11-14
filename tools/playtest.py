@@ -21,7 +21,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sms import SMS  # noqa: E402
+from sms import SMS, machine_for, voices_heard  # noqa: E402
 
 PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_FIRE = 0x01, 0x02, 0x04, 0x08, 0x10
 
@@ -115,16 +115,7 @@ def check_title(rom_path, syms, pool_size=27):
     exists. Both failed silently the first time.
     """
     print('\ntitle screen')
-    sms = SMS(open(rom_path, 'rb').read())
-    psg = []
-    base_out = sms.output
-
-    def tap(port, value):
-        if (port & 0xFF) == 0x7F:
-            psg.append(value)
-        return base_out(port, value)
-
-    sms.cpu.set_output_callback(tap)
+    sms = machine_for(open(rom_path, 'rb').read())
     sms.run_frames(30)
     m = sms.cpu.memory
     et = syms['ARRAY_E_TYPE']
@@ -132,10 +123,20 @@ def check_title(rom_path, syms, pool_size=27):
 
     check('the game boots to a title rather than straight into play',
           alive == 0, f'{alive} entities already spawned')
-    check('the title screen has music', len(psg) > 20,
-          f'{len(psg)} PSG writes in 30 frames')
+    check('the title screen has music', len(sms.sound) > 20,
+          f'{len(sms.sound)} PSG writes in 30 frames')
+    # Counting writes was the whole check for a long time, and it passed
+    # while every bass note of every built-in tune was silent - the player
+    # writes "silent" each frame for a note the chip cannot reach - and
+    # while one sample's title screen had no tune at all.
+    sms.run_frames(30)
+    heard = voices_heard(sms)
+    for voice in ('lead', 'bass'):
+        check(f'the {voice} voice of the title tune is audible',
+              voice in heard,
+              'that channel was never given a volume above silence')
 
-    sms.run_frames(60)
+    sms.run_frames(30)
     check('the title waits rather than starting on its own',
           sum(1 for i in range(pool_size) if m[et + i]) == 0,
           'the game started with no input')
@@ -304,7 +305,7 @@ def playtest_platformer(rom_path, sym_path):
     lives, coins = syms['CVB_LIVES'], syms['CVB_COINS']
 
     def fresh():
-        s = SMS(open(rom_path, 'rb').read())
+        s = machine_for(open(rom_path, 'rb').read())
         start_game(s)
         s.run_frames(12)
         return s, s.cpu.memory
@@ -312,29 +313,50 @@ def playtest_platformer(rom_path, sym_path):
     print('\nterrain')
 
     sms, m = fresh()
-    check('the room has a tilemap on screen',
-          any(sms.vdp.vram[sms.vdp.name_table + i * 2] > 128 for i in range(768)),
+    vdp = sms.vdp
+    # Two bytes a cell in Mode 4, one on a TMS9918.
+    if vdp.mode4:
+        cells = [vdp.vram[vdp.name_table + i * 2] for i in range(768)]
+    else:
+        cells = [vdp.vram[vdp.tms_name_table + i] for i in range(768)]
+    check('the room has a tilemap on screen', any(c > 128 for c in cells),
           'the name table is empty, so SCREEN never copied the room')
 
     # The RAM shadow must be a byte-for-byte copy of the ROM table the room
     # loaded from. Guessing at a plausible number of solid cells would only
     # test the level design; this tests k_load_map.
-    shadow = syms['ARRAY_MAP_ATTR']
     # Found by prefix, not by name: the label is derived from the room's
     # title, so renaming the room in the editor would otherwise break the
     # test rather than the thing it is testing.
     rom_tbl = next((v for k, v in sorted(syms.items())
                     if k.startswith('CVB_ATTR_')), None)
-    rom = open(rom_path, 'rb').read()
     check('the room has a collision table in ROM', rom_tbl is not None,
           'no attr_* label was emitted for any room')
-    same = rom_tbl is not None and all(
-        m[shadow + i] == rom[rom_tbl + i] for i in range(768))
+    pointer = syms.get('CVB_#MAP_P')
+    if pointer is None:
+        # A machine with RAM to spare keeps a copy of the table.
+        shadow = syms['ARRAY_MAP_ATTR']
+        same = rom_tbl is not None and all(
+            m[shadow + i] == m[rom_tbl + i] for i in range(768))
+        check('the collision shadow matches the room table', same,
+              'k_load_map did not copy the attributes correctly')
+    else:
+        # One without reads the cartridge's table in place.
+        shadow = rom_tbl
+        at = m[pointer] | (m[pointer + 1] << 8)
+        check('the collision lookup points at the room table', at == rom_tbl,
+              f'#map_p is ${at:04x}, the table is at ${rom_tbl or 0:04x}')
     solid = sum(1 for i in range(768) if m[shadow + i] & 1)
-    check('the collision shadow matches the room table', same,
-          'k_load_map did not copy the attributes correctly')
     check('the room actually has terrain in it', solid > 50,
           f'only {solid} solid cells of 768')
+    if not vdp.mode4:
+        # The art is one bit a pixel here, and a tile that converted to
+        # nothing - every pixel background - is a wall you cannot see.
+        base = vdp.tms_pattern_base
+        inked = [c for c in set(cells) if c > 128 and
+                 any(vdp.vram[(base + c * 8 + r) & 0x3FFF] for r in range(8))]
+        check('the tiles kept their shapes in one bit per pixel', bool(inked),
+              'every painted tile has an empty pattern')
 
     print('\nphysics')
 
@@ -621,9 +643,12 @@ def playtest_kitchen_sink(rom_path, sym_path):
           'the pool is empty after the room change')
 
 
-def playtest_sg1000(rom_path, sym_path):
+def playtest_tms(rom_path, sym_path):
     """
     The same project on a different machine.
+
+    Run for the SG-1000, the ColecoVision and the MSX: three machines with
+    the same video chip and three different ways of wiring everything else.
 
     This is the test the whole target-profile idea stands or falls on. The
     actors, the collision matrix, the scripts and every behaviour are
@@ -635,7 +660,8 @@ def playtest_sg1000(rom_path, sym_path):
     syms = load_symbols(sym_path)
     check_title(rom_path, syms, pool_size=14)
 
-    sms = SMS(open(rom_path, 'rb').read())
+    sms = machine_for(open(rom_path, 'rb').read())
+    print(f'\n{type(sms).__name__} hardware')
     start_game(sms)
     sms.run_frames(10)
     m = sms.cpu.memory
@@ -686,15 +712,7 @@ def playtest_sg1000(rom_path, sym_path):
           before is not None and after is not None and after < before,
           f'x went from {before} to {after}')
 
-    psg = []
-    base_out = sms.output
-
-    def tap(port, value):
-        if (port & 0xFF) == 0x7F:
-            psg.append(value)
-        return base_out(port, value)
-
-    sms.cpu.set_output_callback(tap)
+    before_fire = len(sms.sound)
     # Count across the whole window rather than at one instant: a shot is
     # only alive for the few frames it takes to cross the screen, so sampling
     # once is a coin flip.
@@ -705,8 +723,10 @@ def playtest_sg1000(rom_path, sym_path):
         if any(m[et + i] == 2 for i in range(14)):
             seen_shot = True
     sms.pad = 0xFF
-    check('firing still makes a sound', len(psg) > 20,
-          f'{len(psg)} PSG writes while holding fire')
+    fired = voices_heard(sms, sms.sound[before_fire:])
+    check('firing still makes a sound', 'effect' in fired,
+          f'the effect channel stayed silent while holding fire; heard: '
+          f'{sorted(fired)}')
     check('firing still spawns shots', seen_shot,
           'no Shot entity appeared at any point while fire was held')
 
@@ -716,8 +736,10 @@ def main():
     rom_path = args[0] if args else 'out/shmup.sms'
     sym_path = args[1] if len(args) > 1 else rom_path.rsplit('.', 1)[0] + '.sym'
 
-    if 'sg1000' in rom_path:
-        playtest_sg1000(rom_path, sym_path)
+    if 'platformer' in rom_path:
+        playtest_platformer(rom_path, sym_path)
+    elif any(k in rom_path for k in ('sg1000', 'coleco', 'msx')):
+        playtest_tms(rom_path, sym_path)
     elif 'platformer' in rom_path:
         playtest_platformer(rom_path, sym_path)
     elif 'kitchen' in rom_path:

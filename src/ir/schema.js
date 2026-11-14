@@ -23,6 +23,9 @@ export const SCHEMA_VERSION = 3;
 export const TARGETS = {
   sms: {
     id: 'sms',
+    // Which sound chip: 'sn' is the SN76489, 'ay' the AY-3-8910. Decides
+    // which effect player the engine includes and how low a note can go.
+    sound: 'sn',
     // Whether in-editor play is bundled for this console (public/emulator).
     bundledEmulator: true,
     // Largest cartridge the generator will produce without bank switching.
@@ -75,6 +78,7 @@ export const TARGETS = {
   },
   sg1000: {
     id: 'sg1000',
+    sound: 'sn',
     // Whether in-editor play is bundled for this console (public/emulator).
     bundledEmulator: true,
     // Largest cartridge the generator will produce without bank switching.
@@ -111,6 +115,7 @@ export const TARGETS = {
   },
   coleco: {
     id: 'coleco',
+    sound: 'sn',
     // Whether in-editor play is bundled for this console (public/emulator).
     bundledEmulator: false,
     // Largest cartridge the generator will produce without bank switching.
@@ -145,6 +150,7 @@ export const TARGETS = {
   },
   msx: {
     id: 'msx',
+    sound: 'ay',
     // Whether in-editor play is bundled for this console (public/emulator).
     bundledEmulator: false,
     // Largest cartridge the generator will produce without bank switching.
@@ -209,6 +215,9 @@ export function emptyProject(name = 'Untitled') {
     palette: defaultPalette(),
     actors: [],
     rooms: [newRoom('Level 1')],
+    // The title screen: shown at boot and after a game over. Empty text
+    // means "use the project's name".
+    title: {text: '', subtitle: '', music: 'title', gameOverMusic: 'gameover'},
     // The global scripts. These live outside any actor, so their toolbox has
     // no `me` and no `other` - blocks that need an instance simply do not
     // exist there, which removes a whole class of confusing errors rather
@@ -376,6 +385,15 @@ export function migrate(project) {
   // and any cell it painted points at a tile that was never defined. The
   // starter set fills that in: those cells become bricks rather than garbage.
   if (!Array.isArray(p.tiles) || !p.tiles.length) p.tiles = starterTiles();
+
+  // A project from before the title screen was editable keeps exactly the
+  // title it had - which for most of them is the project's name and no
+  // tune. Only a brand new project starts with the title theme playing.
+  if (!p.title || typeof p.title !== 'object') {
+    p.title = {text: '', subtitle: '', music: null, gameOverMusic: null};
+  }
+  if (!Array.isArray(p.sounds)) p.sounds = [];
+  if (!Array.isArray(p.music)) p.music = [];
 
   const base = emptyProject(p.name || 'Untitled');
   p = {...base, ...p, schemaVersion: SCHEMA_VERSION};

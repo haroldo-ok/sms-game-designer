@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-A headless Sega Master System, just complete enough to see the screen.
+A headless Sega Master System, just complete enough to see the screen -
+and, since they are the same CPU and nearly the same video chip, a headless
+SG-1000, ColecoVision and MSX as well (see Coleco and MSX below).
 
 `06-roadmap-and-risks.md` lists "generated code hits a CVBasic edge case" as a
 risk and answers it with a suite that compiles every sample. Compiling is not
@@ -293,6 +295,9 @@ class SMS:
         self.pad = 0xFF
         self.vcounter = 0
         self.stalled = False
+        # Every byte written to the PSG, in order. This machine makes no
+        # sound, but what was sent to the chip says whether the game would.
+        self.sound = []
 
     def read(self, addr):
         return self.cpu.memory[addr]
@@ -322,6 +327,8 @@ class SMS:
             self.vdp.write_data(value)
         elif p == 0xBF or p == 0xBD:
             self.vdp.write_control(value)
+        elif p == 0x7F or p == 0x7E:
+            self.sound.append(value)
         return 0
 
     def run_frames(self, n, guard=600):
@@ -368,6 +375,252 @@ class SMS:
         self.cpu.memory[(sp + 1) & 0xFFFF] = pc >> 8
         self.cpu.sp = sp
         self.cpu.pc = 0x38
+
+
+def voices_heard(machine, log=None):
+    """
+    Which of the four voices were given a volume above silence.
+
+    Returns a set drawn from 'lead', 'bass' (the two the music player uses)
+    and 'effect', 'noise' (the two the effect player uses), whichever chip
+    the machine has. Counting writes is not enough to know a voice sounds:
+    CVBasic's player writes "silent" every frame for a note the chip cannot
+    reach.
+    """
+    log = machine.sound if log is None else log
+    heard = set()
+    if isinstance(machine, MSX):
+        mixer = 0xB8
+        for reg, value in log:
+            if reg == 7:
+                mixer = value
+            if reg == 8 and value & 15:
+                heard.add('lead')
+            if reg == 9 and value & 15:
+                heard.add('bass')
+            if reg == 10 and value & 15:
+                # Channel C carries effects; the mixer says which kind.
+                heard.add('noise' if not mixer & 0x20 else 'effect')
+        return heard
+    names = {0: 'lead', 1: 'bass', 2: 'effect', 3: 'noise'}
+    for value in log:
+        # %1cc1vvvv sets channel cc's attenuation; 15 is silent.
+        if value & 0x90 == 0x90 and value & 0x0F != 0x0F:
+            heard.add(names[(value >> 5) & 3])
+    return heard
+
+
+def stub_font():
+    """
+    Glyphs for a stand-in BIOS: 96 characters, space blank and the rest a
+    box with the character code written into it. Not legible, and it does
+    not need to be - the tests count what is on screen, they do not read it -
+    but a printed character must not look like an empty cell.
+    """
+    out = bytearray()
+    for code in range(32, 128):
+        if code == 32:
+            out += bytes(8)
+        else:
+            out += bytes([0x7E, 0x42, code, code ^ 0xFF, code, 0x42, 0x7E, 0])
+    return out
+
+
+class Coleco(SMS):
+    """
+    A headless ColecoVision.
+
+    The same Z80 and the same TMS9918 as the SG-1000, wired differently: the
+    cartridge sits at $8000 under a BIOS, the frame interrupt is an NMI
+    rather than a maskable interrupt, the PSG is at $ff, and the controller
+    is read through a mode latch. CVBasic programs use the BIOS for exactly
+    three things - it jumps to the cartridge, forwards the NMI to it, and
+    holds the font - so a twenty-byte stand-in is a complete BIOS as far as
+    they can tell, and no copyrighted image is needed to test one.
+
+    `pad` keeps the Master System's layout (bit 0 up, 1 down, 2 left,
+    3 right, 4 fire; a clear bit is a press) so one playtest drives every
+    machine.
+    """
+
+    def __init__(self, rom):
+        self.rom = bytearray(rom)
+        self.vdp = VDP()
+        self.cpu = z80.Z80Machine()
+        mem = self.cpu.memory
+        mem[0x8000:0x8000 + len(self.rom)] = self.rom
+        # Reset: set a stack, jump to the address in the cartridge header.
+        mem[0x0000:0x0007] = bytes([0x31, 0xB9, 0x73,      # ld sp,$73b9
+                                    0x2A, 0x0A, 0x80,      # ld hl,($800a)
+                                    0xE9])                 # jp (hl)
+        # NMI: the cartridge's handler is the eighth vector, at $8021.
+        mem[0x0066:0x0069] = bytes([0xC3, 0x21, 0x80])
+        font = stub_font()
+        mem[0x1000:0x1000 + len(font)] = font
+        # $006c points at the glyph for character 16; CVBasic subtracts 128.
+        mem[0x006C] = (0x1000 + 128) & 0xFF
+        mem[0x006D] = (0x1000 + 128) >> 8
+        self.cpu.set_input_callback(self.input)
+        self.cpu.set_output_callback(self.output)
+        self.pad = 0xFF
+        self.vcounter = 0
+        self.stalled = False
+        self.joy_mode = True
+        self.sound = []
+
+    def input(self, port):
+        p = port & 0xFF
+        if p == 0xBE:
+            return self.vdp.read_data()
+        if p == 0xBF:
+            return self.vdp.read_control()
+        if p == 0xFC:
+            if not self.joy_mode:
+                return 0x7F     # keypad: nothing held, right button up
+            # Joystick mode: bit 0 up, 1 right, 2 down, 3 left, 6 fire.
+            v = 0x7F
+            for mine, theirs in ((0x01, 0x01), (0x08, 0x02), (0x02, 0x04),
+                                 (0x04, 0x08), (0x10, 0x40)):
+                if not self.pad & mine:
+                    v &= ~theirs
+            return v & 0xFF
+        return 0xFF
+
+    def output(self, port, value):
+        p = port & 0xFF
+        if p == 0xBE:
+            self.vdp.write_data(value)
+        elif p == 0xBF:
+            self.vdp.write_control(value)
+        elif p == 0xFF:
+            self.sound.append(value)
+        elif p == 0xC0:
+            self.joy_mode = True
+        elif p == 0x80:
+            self.joy_mode = False
+        return 0
+
+    def interrupt(self):
+        """
+        NMI: push PC, jump to $66. Raised only while the VDP's interrupt
+        enable bit is set, as on the real machine - a program that never
+        turns it on never gets a frame.
+        """
+        if not self.vdp.regs[1] & 0x20:
+            return
+        self.cpu.halted = False
+        sp = (self.cpu.sp - 2) & 0xFFFF
+        pc = self.cpu.pc
+        self.cpu.memory[sp] = pc & 0xFF
+        self.cpu.memory[(sp + 1) & 0xFFFF] = pc >> 8
+        self.cpu.sp = sp
+        self.cpu.pc = 0x66
+
+
+class MSX(SMS):
+    """
+    A headless MSX1.
+
+    Again the same CPU and video chip, with a third arrangement: the
+    cartridge at $4000, RAM at the top, the VDP at $98, and an AY-3-8910
+    behind $a0-$a2 that also carries the joystick. CVBasic programs call the
+    BIOS for the sound chip (WRTPSG, RDPSG), for slot selection, and for the
+    font, and take their frame interrupt through the H.KEYI hook at $fd9a.
+    The stand-in below implements exactly those entry points.
+
+    `pad` has the Master System's layout, as on the other machines.
+    `sound` collects (register, value) pairs written to the AY.
+    """
+
+    def __init__(self, rom):
+        self.rom = bytearray(rom)
+        self.vdp = VDP()
+        self.cpu = z80.Z80Machine()
+        mem = self.cpu.memory
+        mem[0x4000:0x4000 + len(self.rom)] = self.rom
+
+        def put(addr, code):
+            mem[addr:addr + len(code)] = bytes(code)
+
+        # Reset: stack, then the start address from the "AB" header.
+        put(0x0000, [0xF3, 0xC3, 0x00, 0x01])                  # di / jp $100
+        put(0x0100, [0x31, 0x80, 0xF3,                         # ld sp,$f380
+                     0x2A, 0x02, 0x40, 0xE9])                  # jp ($4002)
+        # $0004: address of the character set. CVBasic adds $100 to reach
+        # character 32, so the table is placed to make that the first glyph.
+        font = stub_font()
+        put(0x1100, font)
+        put(0x0004, [0x00, 0x10])
+        put(0x002B, [0x00])                                    # 60 Hz
+        put(0x0024, [0xC9])                                    # ENASLT
+        put(0x0138, [0xAF, 0xC9])                              # RSLREG
+        # Interrupt: save, call the hook, restore, ei, ret.
+        put(0x0038, [0xF5, 0xC5, 0xD5, 0xE5,
+                     0xCD, 0x9A, 0xFD,
+                     0xE1, 0xD1, 0xC1, 0xF1, 0xFB, 0xC9])
+        # WRTPSG and RDPSG are three bytes apart in the jump table, so the
+        # routines themselves live elsewhere.
+        put(0x0093, [0xC3, 0x10, 0x01])                        # WRTPSG
+        put(0x0096, [0xC3, 0x20, 0x01])                        # RDPSG
+        put(0x0110, [0xD3, 0xA0, 0xF5, 0x7B, 0xD3, 0xA1, 0xF1, 0xC9])
+        put(0x0120, [0xD3, 0xA0, 0xDB, 0xA2, 0xC9])
+        put(0xFD9A, [0xC9, 0xC9, 0xC9])                        # H.KEYI
+        self.cpu.set_input_callback(self.input)
+        self.cpu.set_output_callback(self.output)
+        self.pad = 0xFF
+        self.vcounter = 0
+        self.stalled = False
+        self.ay_reg = 0
+        self.ay = [0] * 16
+        self.ppi_c = 0
+        self.sound = []
+
+    def input(self, port):
+        p = port & 0xFF
+        if p == 0x98:
+            return self.vdp.read_data()
+        if p == 0x99:
+            return self.vdp.read_control()
+        if p == 0xA2:
+            if self.ay_reg == 14:
+                # Joystick: bit 0 up, 1 down, 2 left, 3 right, 4 trigger.
+                return 0x20 | (self.pad & 0x1F) | 0x40
+            return self.ay[self.ay_reg & 15]
+        if p == 0xA9:
+            return 0xFF         # keyboard: nothing pressed
+        if p == 0xAA:
+            return self.ppi_c
+        return 0xFF
+
+    def output(self, port, value):
+        p = port & 0xFF
+        if p == 0x98:
+            self.vdp.write_data(value)
+        elif p == 0x99:
+            self.vdp.write_control(value)
+        elif p == 0xA0:
+            self.ay_reg = value & 15
+        elif p == 0xA1:
+            self.ay[self.ay_reg] = value
+            self.sound.append((self.ay_reg, value))
+        elif p == 0xAA:
+            self.ppi_c = value
+        return 0
+
+
+def machine_for(rom, kind=None):
+    """
+    The right machine for a ROM image, from its header when not told.
+
+    A ColecoVision cartridge starts $55 $aa (or $aa $55); an MSX one starts
+    "AB". Sega cartridges have no header at the start - they are code from
+    the first byte.
+    """
+    if kind in ('coleco',) or (kind is None and rom[:2] in (b'\x55\xaa', b'\xaa\x55')):
+        return Coleco(rom)
+    if kind in ('msx',) or (kind is None and rom[:2] == b'AB'):
+        return MSX(rom)
+    return SMS(rom)
 
 
 # The TMS9918's fixed 16-colour palette, as commonly measured.
@@ -460,9 +713,11 @@ def main():
     ap.add_argument('--png')
     ap.add_argument('--sprites', action='store_true')
     ap.add_argument('--vram')
+    ap.add_argument('--machine', choices=['sms', 'coleco', 'msx'],
+                    help='default: decided from the ROM header')
     args = ap.parse_args()
 
-    sms = SMS(open(args.rom, 'rb').read())
+    sms = machine_for(open(args.rom, 'rb').read(), args.machine)
     sms.run_frames(args.frames)
 
     screen = sms.vdp.render()

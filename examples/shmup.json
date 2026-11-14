@@ -64,7 +64,8 @@
   "title": {
     "text": "BUG BLASTER",
     "subtitle": "THE SWARM RETURNS",
-    "music": "title"
+    "music": "title",
+    "gameOverMusic": "gameover"
   },
   "tiles": [],
   "timeSlicedPairs": [

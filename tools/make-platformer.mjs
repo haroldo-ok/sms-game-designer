@@ -238,14 +238,18 @@ const project = {
     },
   ],
 
+  // The title screen is shown at boot and again after a game over, so
+  // losing lands somewhere deliberate instead of dropping straight back in.
+  // It belongs to the project: for a long time it sat inside the first room,
+  // where nothing reads it, so this game booted to a title with no name and
+  // no tune.
+  title: {text: 'CAVERN RUN', subtitle: 'MIND THE SPIKES', music: 'title',
+    gameOverMusic: 'gameover'},
+
   rooms: [
     {
       id: 'cavern', name: 'Cavern 1', music: 'action', bgPalette: 0,
-      // The title screen is shown at boot and again after a game over, so
-  // losing lands somewhere deliberate instead of dropping straight back in.
-  title: {text: 'CAVERN RUN', subtitle: 'MIND THE SPIKES', music: 'title'},
-
-  tiles: buildMap(0),
+      tiles: buildMap(0),
       placements: [
         // Column 2, with clear sky above it. Spawning under a ledge puts the
         // hero in a gap it cannot jump out of, which looks exactly like

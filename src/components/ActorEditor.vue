@@ -158,7 +158,7 @@
             label="Starts at"
           />
           <v-btn icon small @click="actor.fields.splice(i, 1)">
-            <v-icon small>mdi-close</v-icon>
+            <v-icon small>$close</v-icon>
           </v-btn>
         </div>
         <v-btn x-small text :disabled="fieldsFull" @click="$emit('add-field')">
@@ -228,7 +228,7 @@
             </template>
           </component>
           <v-btn icon small @click="actor.behaviours.splice(i, 1)">
-            <v-icon small>mdi-close</v-icon>
+            <v-icon small>$close</v-icon>
           </v-btn>
         </div>
         <v-select
@@ -517,6 +517,9 @@ export default {
 .anim-bar, .event-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .anim-body { display: flex; gap: 20px; align-items: flex-start; }
 .anim-props { width: 200px; }
+/* Dense fields stacked with no gap put each label on top of the value above
+   it: "Frames held" was drawn across the animation's name. */
+.anim-props > * + * { margin-top: 18px; }
 .frames { margin-top: 12px; }
 .hitbox-row, .field-row { display: flex; gap: 12px; align-items: center; max-width: 620px; margin-bottom: 8px; }
 .behaviour {

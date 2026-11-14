@@ -122,6 +122,69 @@ samples.forEach((file) => {
   });
 });
 
+/* ---- the same games on every console ------------------------------ */
+// The SG-1000 cut of the shmup is the shmup with its instance counts brought
+// inside a TMS9918 machine. The ColecoVision and the MSX are the same video
+// chip wired to different everything else, so the claim is that changing
+// the target and nothing more gives a working game on each - and the
+// platformer, which has painted terrain, on all three as well.
+console.log('\nevery console');
+
+const PORTS = [];
+[['shmup-sg1000', 'shmup', ['coleco', 'msx']],
+  ['platformer', 'platformer', ['sg1000', 'coleco', 'msx']]].forEach(([file, stem, targets]) => {
+  targets.forEach((target) => {
+    const name = `${stem}-${target}`;
+    test(`${stem} builds for ${TARGETS[target].label}`, () => {
+      const project = migrate(JSON.parse(
+          readFileSync(join(root, 'examples', `${file}.json`), 'utf8')));
+      project.target = target;
+      const ir = buildIR(project);
+      const errors = [...ir.diagnostics, ...lint(ir)]
+          .filter((d) => d.severity === 'error');
+      assert(!errors.length, errors.map((e) => e.message).join(' / '));
+      const r = compile(project, name);
+      if (r.skipped) return;
+      assert(r.rom.length > 0, 'empty ROM');
+      assert(r.ramUsed <= r.ramTotal,
+          `${r.ramUsed} bytes of RAM used, ${r.ramTotal} available`);
+      PORTS.push(name);
+    });
+  });
+});
+
+test('a room with tiles costs a small machine no RAM', () => {
+  // 768 bytes of collision shadow would not fit beside the entity pool in
+  // the SG-1000's or the ColecoVision's RAM. Those targets read the room's
+  // table from the cartridge instead.
+  const project = migrate(JSON.parse(
+      readFileSync(join(root, 'examples/platformer.json'), 'utf8')));
+  project.target = 'coleco';
+  const ir = buildIR(project);
+  const {source} = generateProgram(ir);
+  assert(/CONST #MAP_CELLS = 1\b/.test(source),
+      'the RAM shadow is still being reserved');
+  assert(/INCLUDE "engine\/terrain_rom\.bas"/.test(source),
+      'the ROM-reading terrain lookup is not included');
+  assert(!/INCLUDE "engine\/terrain\.bas"/.test(source),
+      'the RAM-shadow terrain lookup is included as well');
+});
+
+test('TMS tiles are one byte a cell, with a colour table', () => {
+  const project = migrate(JSON.parse(
+      readFileSync(join(root, 'examples/platformer.json'), 'utf8')));
+  project.target = 'msx';
+  const {source} = generateProgram(buildIR(project));
+  const row = /^map_\w+:\n\tDATA BYTE (.*)$/m.exec(source);
+  assert(row && row[1].split(',').length === 32,
+      `a name table row has ${row && row[1].split(',').length} bytes, not 32`);
+  assert(/DEFINE COLOR 128,\d+,tile_colour/.test(source),
+      'tile colours are never loaded');
+  assert(/^tile_colour:/m.test(source), 'there is no tile colour table');
+  assert(/\tMODE 0\n/.test(source),
+      'a game with tiles needs MODE 0 for per-row tile colours');
+});
+
 console.log('\nengine invariants');
 
 test('no runtime multiply, divide or modulo in generated code', () => {
@@ -637,13 +700,17 @@ test('exceeding the pool is caught before compiling', () => {
       'expected a pool-overflow error for 60 slots on a 40-slot target');
 });
 
-test('painted tiles are refused on a target that cannot show them', () => {
-  const p = migrate(JSON.parse(
-      readFileSync(join(root, 'examples/platformer.json'), 'utf8')));
-  p.target = 'sg1000';
-  const problems = lint(buildIR(p));
-  assert(problems.some((x) => x.code === 'terrain-unsupported'),
-      'a tilemap on the SG-1000 would have built into garbage');
+test('painted tiles are accepted on every target', () => {
+  // They used to be refused everywhere but the Master System, because the
+  // room tables were written in its layout only.
+  ['sg1000', 'coleco', 'msx'].forEach((target) => {
+    const p = migrate(JSON.parse(
+        readFileSync(join(root, 'examples/platformer.json'), 'utf8')));
+    p.target = target;
+    const problems = lint(buildIR(p));
+    assert(!problems.some((x) => x.code === 'terrain-unsupported'),
+        `tiles are still refused on ${target}`);
+  });
 });
 
 test('a cell pointing past the tile set is caught', () => {
@@ -701,28 +768,50 @@ test('every target profile is internally consistent', () => {
 // and nothing that only reads source can tell the difference.
 if (haveTools) {
   console.log('\nplaytest');
-  try {
-    ['shmup', 'platformer', 'kitchen-sink', 'shmup-sg1000'].forEach((name) => {
-      const out = execFileSync('python3',
+  // Each game is run on its own, and a failing one is reported check by
+  // check. This used to be one try block around all four: a single failed
+  // check made the script exit non-zero, the catch printed the last twelve
+  // lines of its output - usually not the failing ones - and the games after
+  // it were never run at all.
+  let noEmulator = false;
+  ['shmup', 'platformer', 'kitchen-sink', 'shmup-sg1000', ...PORTS].forEach((name) => {
+    if (noEmulator) return;
+    if (PORTS.includes(name)) console.log(`  ${name}`);
+    let out = '';
+    let crashed = false;
+    try {
+      out = execFileSync('python3',
           [join(root, 'tools/playtest.py'),
             join(tmp, `${name}.rom`), join(tmp, `${name}.sym`)],
           {encoding: 'utf8', cwd: root, stdio: ['pipe', 'pipe', 'pipe']});
-      out.split('\n').filter((l) => /^\s{2}(ok|FAIL)/.test(l))
-          .forEach((l) => {
-            console.log(l);
-            if (l.includes('FAIL')) failed++;
-            else passed++;
-          });
+    } catch (e) {
+      out = (e.stdout || '') + (e.stderr || '');
+      if (/ModuleNotFoundError|No module named/.test(out)) {
+        console.log('  skipped (pip install z80)');
+        noEmulator = true;
+        return;
+      }
+      // Exit status 1 with a verdict line is an ordinary failed check. No
+      // verdict means the script itself fell over.
+      crashed = !/\d+ passed, \d+ failed/.test(out);
+    }
+    const lines = out.split('\n');
+    lines.forEach((l, i) => {
+      if (!/^\s{2}(ok|FAIL)/.test(l)) return;
+      console.log(l);
+      if (l.includes('FAIL')) {
+        failed++;
+        if (lines[i + 1] && /^\s{8}/.test(lines[i + 1])) console.log(lines[i + 1]);
+      } else {
+        passed++;
+      }
     });
-  } catch (e) {
-    const out = (e.stdout || '') + (e.stderr || '');
-    if (/ModuleNotFoundError|No module named/.test(out)) {
-      console.log('  skipped (pip install z80)');
-    } else {
-      out.split('\n').filter(Boolean).slice(-12).forEach((l) => console.log('  ' + l));
+    if (crashed) {
+      console.log(`  FAIL  the ${name} playtest ran to completion`);
+      lines.filter(Boolean).slice(-8).forEach((l) => console.log('        ' + l));
       failed++;
     }
-  }
+  });
 }
 
 /* ---- block layer -------------------------------------------------- */
@@ -741,6 +830,8 @@ const SUITES = [
   ['tools/test-ui.mjs', 'editor templates'],
   ['tools/test-render.mjs', 'editor rendering'],
   ['tools/test-store.mjs', 'project store'],
+  ['tools/test-sound.mjs', 'sound'],
+  ['tools/test-pixels.mjs', 'pixel tools and TMS colour'],
   ['tools/test-wasm.mjs', 'in-browser compiler'],
   ['tools/test-emulator.mjs', 'bundled emulator'],
   ['tools/test-site-check.mjs', 'site checker'],

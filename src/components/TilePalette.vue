@@ -81,12 +81,16 @@
  * every later index down by one and every room has to be remapped to match -
  * which is the store's job, not a palette's.
  */
+import {tmsTileCss} from '../ir/tms.js';
+
 export default {
   name: 'TilePalette',
   props: {
     tiles: {type: Array, required: true},
     selected: {type: Number, default: 1},
     palette: {type: Array, default: () => []},
+    // Draw tiles as a TMS9918 will: two fixed colours a row.
+    tms: {type: Boolean, default: false},
   },
   data() {
     return {
@@ -111,7 +115,8 @@ export default {
   },
   watch: {
     tiles: {handler: 'drawAll', deep: true},
-    palette: 'drawAll',
+    palette: {handler: 'drawAll', deep: true},
+    tms: 'drawAll',
   },
   mounted() {
     this.drawAll();
@@ -133,8 +138,9 @@ export default {
           const canvas = Array.isArray(ref) ? ref[0] : ref;
           const ctx = canvas && canvas.getContext && canvas.getContext('2d');
           if (!ctx) return;
+          const shown = this.tms ? tmsTileCss(t, this.palette) : null;
           (t.pixels || []).forEach((row, y) => (row || []).forEach((v, x) => {
-            ctx.fillStyle = this.rgb(this.palette[v | 0] || 0);
+            ctx.fillStyle = shown ? shown[y][x] : this.rgb(this.palette[v | 0] || 0);
             ctx.fillRect(x * 3, y * 3, 3, 3);
           }));
         });

@@ -610,6 +610,121 @@ await test('without Workers, the page builds the same ROM itself', async () => {
 
 inPage.close();
 
+/* ---- sound, undo ------------------------------------------------------ */
+
+const snd = await openEditor({withoutEmulator: true});
+const byClass = (ed, cls) => ed.w.document.querySelector(cls);
+
+await test('the Sound tab makes an effect and a tune that are saved with the project', async () => {
+  snd.button('Open').click();
+  await wait(300);
+  [...snd.w.document.querySelectorAll('.example-item')][0].click();
+  await wait(1500);
+  snd.tab('Sound').click();
+  await wait(400);
+  assert(/Sound effects/.test(snd.text()) && /title theme/.test(snd.text()),
+      'the Sound tab does not list the built-in effects and tunes');
+  byClass(snd, '.add-sound').click();
+  await wait(300);
+  byClass(snd, '.add-tune').click();
+  await wait(300);
+  const saved = await snd.saved();
+  assert(saved.sounds.length === 1 && saved.sounds[0].steps.length > 2,
+      `saved sounds: ${JSON.stringify(saved.sounds).slice(0, 120)}`);
+  assert(saved.music.length === 1 && /C4/.test(saved.music[0].lead),
+      `saved tunes: ${JSON.stringify(saved.music).slice(0, 120)}`);
+});
+
+await test('undo takes back the last edit, and redo restores it', async () => {
+  snd.tab('Sound').click();
+  await wait(300);
+  const before = (await snd.saved()).music.length;
+  byClass(snd, '.add-tune').click();
+  await wait(600);
+  assert((await snd.saved()).music.length === before + 1, 'the tune was not added');
+  const undo = byClass(snd, '.undo-btn');
+  assert(undo && !undo.disabled, 'the undo button is missing or disabled after an edit');
+  undo.click();
+  await wait(500);
+  assert((await snd.saved()).music.length === before,
+      'undo did not remove the tune that was just added');
+  const redo = byClass(snd, '.redo-btn');
+  assert(redo && !redo.disabled, 'redo is not offered after an undo');
+  redo.click();
+  await wait(500);
+  assert((await snd.saved()).music.length === before + 1, 'redo did not restore it');
+});
+
+await test('Ctrl+Z undoes, but not while typing in a text box', async () => {
+  const before = (await snd.saved()).music.length;
+  const key = (target) => target.dispatchEvent(new snd.w.KeyboardEvent('keydown',
+      {key: 'z', ctrlKey: true, bubbles: true, cancelable: true}));
+  // In a text field the browser's own undo applies, one character at a time.
+  const field = snd.w.document.querySelector('.sound input[type="text"]') ||
+    snd.w.document.querySelector('input[type="text"]');
+  assert(field, 'no text field on the page to type in');
+  key(field);
+  await wait(400);
+  assert((await snd.saved()).music.length === before,
+      'Ctrl+Z in a text box undid a project edit');
+  key(snd.w.document.body);
+  await wait(500);
+  assert((await snd.saved()).music.length === before - 1,
+      'Ctrl+Z outside a text box did nothing');
+});
+
+await test('a game with authored sound in it still builds', async () => {
+  snd.tab('Sound').click();
+  await wait(300);
+  byClass(snd, '.add-tune').click();
+  await wait(400);
+  snd.button('Play').click();
+  for (let i = 0; i < 60 && !snd.w.document.querySelector('.play .built'); i++) {
+    await wait(250);
+  }
+  assert(snd.w.document.querySelector('.play .built'),
+      'the project stopped building after sound was added: ' + snd.text().slice(-300));
+  assert(snd.blobs.length > 0, 'no ROM was produced');
+});
+
+await test('the Game tab offers the title screen and its music', async () => {
+  snd.tab('Game').click();
+  await wait(500);
+  assert(/Title screen/.test(snd.text()), 'no title screen section');
+  assert(/Title music/.test(snd.text()) && /Game over music/.test(snd.text()),
+      'the title and game over tunes cannot be chosen');
+});
+
+await test('the block editor takes its pictures from this folder', async () => {
+  // jsdom does not fetch images, so the "no request leaves the machine"
+  // test above cannot see these. Blockly's trashcan and arrows are SVG
+  // <image> elements, and by default they point at Blockly's demo site.
+  const hrefs = [...snd.w.document.querySelectorAll('image')]
+      .map((i) => i.getAttribute('xlink:href') || i.getAttribute('href'))
+      .filter((h) => h && !h.startsWith('data:'));   // inlined ones are fine
+  assert(hrefs.length > 0, 'no Blockly workspace on the Game tab to check');
+  const outside = hrefs.filter((h) => !h.startsWith('http://localhost/'));
+  assert(!outside.length, `images loaded from elsewhere: ${outside.slice(0, 2).join(', ')}`);
+  const missing = hrefs.filter((h) =>
+    !existsSync(join(dist, new URL(h).pathname.slice(1))));
+  assert(!missing.length, `not in the build: ${missing.slice(0, 2).join(', ')}`);
+});
+
+await test('the Rooms tab offers music for the room', async () => {
+  snd.tab('Rooms').click();
+  await wait(500);
+  assert(byClass(snd, '.room-music'), 'a room\'s music cannot be chosen');
+});
+
+await test('nothing went wrong on the page while sound was being edited', () => {
+  // This page was opened without the emulator, so its loader failing to
+  // arrive is the test's own doing.
+  const real = snd.problems.filter((p) => !/emulator\/loader\.js/.test(p));
+  assert(!real.length, real.slice(0, 3).join('\n'));
+});
+
+snd.close();
+
 await test('no error escaped a page while the editor was being driven', () => {
   assert(!escaped.length, escaped.slice(0, 3).join('\n'));
 });

@@ -28,7 +28,12 @@ export function emitRoomData(ir) {
     const rows = ir.target.screenRows;
     const tiles = room.tiles || [];
 
-    out.push(`\t' ---- ${room.name}: name table image (2 bytes per cell) ----`);
+    // The Master System's name table is two bytes a cell; the TMS9918's is
+    // one. SCREEN copies whichever the target uses, so the table has to be
+    // in the target's own layout.
+    const wide = ir.target.video === 'sms';
+    out.push(`\t' ---- ${room.name}: name table image ` +
+      `(${wide ? 2 : 1} byte${wide ? 's' : ''} per cell) ----`);
     out.push(`map_${room.symbol}:`);
     for (let y = 0; y < rows; y++) {
       const bytes = [];
@@ -36,7 +41,8 @@ export function emitRoomData(ir) {
         const t = (tiles[y] && tiles[y][x]) | 0;
         // Low byte is the pattern number, high byte the per-cell flags
         // (bit 0 selects patterns 256-511, bit 3 uses the sprite palette).
-        bytes.push((t + ir.layout.tileBase) & 255, 0);
+        bytes.push((t + ir.layout.tileBase) & 255);
+        if (wide) bytes.push(0);
       }
       out.push(`\tDATA BYTE ${bytes.join(',')}`);
     }
@@ -127,7 +133,7 @@ export function emitRoomProcs(ir) {
   out.push('\t\' Game over: clear the field, wait for the player, start again.');
   out.push('\t\'');
   const title = ir.title || {};
-  const name = (title.text || ir.name || 'GAME').toUpperCase().slice(0, 30);
+  const name = screenText(title.text || ir.name || 'GAME') || 'GAME';
   out.push('\t\'');
   out.push('\t\' Title screen. Shown at boot and again after a game over, so');
   out.push('\t\' losing returns you somewhere that looks deliberate rather');
@@ -141,8 +147,8 @@ export function emitRoomProcs(ir) {
     out.push(`\tPLAY music_${title.music}`);
   }
   out.push(`\tPRINT AT ${centre(name, 9)},"${name}"`);
-  if (title.subtitle) {
-    const sub = String(title.subtitle).toUpperCase().slice(0, 30);
+  if (screenText(title.subtitle)) {
+    const sub = screenText(title.subtitle);
     out.push(`\tPRINT AT ${centre(sub, 12)},"${sub}"`);
   }
   out.push(`\tPRINT AT ${centre('PRESS FIRE', 16)},"PRESS FIRE"`);
@@ -165,8 +171,12 @@ export function emitRoomProcs(ir) {
   out.push('\tGOSUB k_clear_pool');
   out.push('\tGOSUB k_render');
   out.push('\tCLS');
-  if ((ir.music || []).includes('gameover')) {
-    out.push('\tPLAY music_gameover');
+  // The tune the project chose for losing. It used to be played only if
+  // some block elsewhere happened to mention the built-in sting, which no
+  // project did, so no game ever played it.
+  const sting = title.gameOverMusic;
+  if (sting && (ir.music || []).includes(sting)) {
+    out.push(`\tPLAY music_${sting}`);
   }
   out.push('\tPRINT AT 365,"GAME OVER"');
   out.push('\tFOR k_lp = 0 TO 90');
@@ -182,6 +192,17 @@ export function emitRoomProcs(ir) {
   out.push('\tGOSUB do_title');
   out.push('\tEND');
   return out;
+}
+
+/**
+ * Text for the title screen, made safe to sit inside a CVBasic string: upper
+ * case, one row wide, and nothing but printable ASCII. A double quote would
+ * end the string early and a backslash starts an escape - either one turns
+ * a game's name into a compile error on a line the user never wrote.
+ */
+function screenText(text) {
+  return String(text || '').toUpperCase()
+      .replace(/[^\x20-\x7e]|["\\]/g, '').trim().slice(0, 30);
 }
 
 /** PRINT AT position that centres a string on a 32-column row. */

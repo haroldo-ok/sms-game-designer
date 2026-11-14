@@ -56,6 +56,31 @@ tile, and its flags decide what the tile *is* — Solid is what the movement
 behaviours obey, the rest are for your own scripts to test. **Place actors**
 puts the chosen actor where you click; right-click one to remove it.
 
+## Sound
+
+The **Sound** tab is where effects and tunes are made. An effect is drawn as
+two rows of bars - pitch and loudness, one bar a frame - starting from a
+copy of one of the five built-ins. A tune is a piano roll with a melody and
+a bass line: click to place a note, drag right to hold it, right-click to
+remove it. **Listen** plays either one in the browser.
+
+What you make shows up in the `play sound` and `play music` blocks, in each
+room's **Music** setting, and under **Game → Title screen**, where the title
+and game over tunes are chosen.
+
+## Undo
+
+Ctrl+Z undoes and Ctrl+Shift+Z redoes, anywhere in the project - pixels,
+tiles, rooms, blocks, sounds. The same two arrows are in the toolbar.
+
+## Other consoles
+
+The console menu in the toolbar switches the project between the Master System, the
+SG-1000, the ColecoVision and the MSX. All four build, and all four are
+played by the test suite. On the last three a sprite has one colour and a
+tile has two colours a row, from the console's fixed palette; the editor
+shows your art the way that console will.
+
 ## Your work is yours
 
 Projects autosave in your browser, and **Save** downloads the whole project

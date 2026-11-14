@@ -21,6 +21,8 @@
  */
 
 import {targetProfile, GROUPS} from './schema.js';
+import {sfxList, tuneList} from './sound.js';
+import {nearestTms, sixBitToRgb} from './tms.js';
 
 /** Reserved CVBasic / kernel identifiers that user names must not collide with. */
 const RESERVED = new Set([
@@ -394,6 +396,12 @@ function buildIRInner(project, target, diagnostics) {
     // Only the tunes this project mentions are emitted: an unused tune is a
     // few hundred bytes of a 32 KB cartridge.
     music: collectMusic(project),
+    // Every effect, built-in then authored, in table order; and every tune
+    // the project could name. Codegen and the lint both read these, so a
+    // name means the same thing to each.
+    sounds: sfxList(project),
+    tunes: tuneList(project),
+    soundRefs: collectSounds(project),
     title: project.title || null,
     scripts: project.scripts || {},
     tiles: project.tiles || [],
@@ -419,6 +427,9 @@ function buildIRInner(project, target, diagnostics) {
 function collectMusic(project) {
   const names = new Set();
   if (project.title && project.title.music) names.add(project.title.music);
+  if (project.title && project.title.gameOverMusic) {
+    names.add(project.title.gameOverMusic);
+  }
   (project.rooms || []).forEach((r) => {
     if (r.music) names.add(r.music);
   });
@@ -433,6 +444,27 @@ function collectMusic(project) {
     Object.values(r.scripts || {}).forEach((sc) => walk(sc && sc.stmts)));
   (project.actors || []).forEach((a) =>
     Object.values(a.scripts || {}).forEach((sc) => walk(sc && sc.stmts)));
+  return [...names];
+}
+
+/** Every effect named by a `play sound` block or a Shoot behaviour. */
+function collectSounds(project) {
+  const names = new Set();
+  const walk = (list) => (list || []).forEach((st) => {
+    if (st.op === 'playSound' && st.sound) names.add(st.sound);
+    walk(st.then);
+    walk(st.else);
+    walk(st.body);
+  });
+  Object.values(project.scripts || {}).forEach((sc) => walk(sc && sc.stmts));
+  (project.rooms || []).forEach((r) =>
+    Object.values(r.scripts || {}).forEach((sc) => walk(sc && sc.stmts)));
+  (project.actors || []).forEach((a) => {
+    Object.values(a.scripts || {}).forEach((sc) => walk(sc && sc.stmts));
+    (a.behaviours || []).forEach((b) => {
+      if (b.sound) names.add(b.sound);
+    });
+  });
   return [...names];
 }
 
@@ -488,22 +520,6 @@ function scriptsSetVelocity(actor) {
 }
 
 /**
- * The TMS9918's fixed 16-colour palette, in RGB.
- *
- * Fixed is the operative word: unlike the SMS there is nothing to load, so a
- * pixel index in the project's art means an entry in the *project's* palette
- * and has to be translated, not passed through. Passing it through paints a
- * green enemy blue and a white ship black - which is exactly what happened
- * the first time, and the black ship simply vanished against the backdrop.
- */
-const TMS_PALETTE = [
-  null, [0, 0, 0], [33, 200, 66], [94, 220, 120],
-  [84, 85, 237], [125, 118, 252], [212, 82, 77], [66, 235, 245],
-  [252, 85, 84], [255, 121, 120], [212, 193, 84], [230, 206, 128],
-  [33, 176, 59], [201, 91, 186], [204, 204, 204], [255, 255, 255],
-];
-
-/**
  * The single colour a TMS9918 sprite will be drawn in.
  *
  * These machines give a sprite one colour for all of its pixels, so art that
@@ -531,25 +547,6 @@ function dominantColour(frames, palette) {
   }
   if (!best) return 15;
   return nearestTms(sixBitToRgb((palette && palette.sprite && palette.sprite[best]) | 0));
-}
-
-/** SMS colour registers are 00BBGGRR, two bits a channel. */
-function sixBitToRgb(v) {
-  return [(v & 3) * 85, ((v >> 2) & 3) * 85, ((v >> 4) & 3) * 85];
-}
-
-function nearestTms([r, g, b]) {
-  let best = 15;
-  let bestD = Infinity;
-  for (let i = 1; i < 16; i++) {
-    const c = TMS_PALETTE[i];
-    const d = (c[0] - r) ** 2 + (c[1] - g) ** 2 + (c[2] - b) ** 2;
-    if (d < bestD) {
-      bestD = d;
-      best = i;
-    }
-  }
-  return best;
 }
 
 function normaliseHitbox(actor) {

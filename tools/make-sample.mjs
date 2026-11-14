@@ -99,7 +99,8 @@ const project = {
 
   // The title screen is shown at boot and again after a game over, so
   // losing lands somewhere deliberate instead of dropping straight back in.
-  title: {text: 'BUG BLASTER', subtitle: 'THE SWARM RETURNS', music: 'title'},
+  title: {text: 'BUG BLASTER', subtitle: 'THE SWARM RETURNS', music: 'title',
+    gameOverMusic: 'gameover'},
 
   tiles: [],
 

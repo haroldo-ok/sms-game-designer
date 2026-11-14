@@ -209,7 +209,8 @@ them it is 125%, and the design documents had no way to know that.
 | M3 — editor: actors, blocks, one room | **Done.** Builds ROMs in the browser, byte-identical to the native compilers |
 | M4 — rooms, tilemaps, terrain | **Done and playtested**, with a tile editor, drag painting, and an end-to-end test of the room editor |
 | M5 — sound, music, title flow | **Done and playtested.** Effects, three built-in tunes, title screen |
-| M6 — second target | **SG-1000 builds, runs and is playtested.** ColecoVision and MSX untested |
+| M6 — second target | **SG-1000, ColecoVision and MSX build, run and are playtested**, shooter and platformer both |
+| M7 — authored sound | **Done and playtested.** Effect and tune editors, preview, per-chip effect players |
 
 Sound is built in rather than authored: five effect envelopes played a step
 per frame, and three tunes — a title loop, something under the action, and a
@@ -221,7 +222,32 @@ music feels dead.
 
 Tunes are written as space-separated tokens in CVBasic's own note notation,
 so the generated source stays readable and anyone who outgrows the three
-built-ins can edit it by hand. A tracker is still the right long-term answer.
+built-ins can edit it by hand.
+
+### Authored sound (M7)
+
+The Sound tab is that long-term answer, kept small. An effect is a list of
+`{hz, vol}` steps, one a frame; a tune is two voices of the same tokens the
+built-ins use, edited on a piano roll. Both are stored in the project
+(`sounds`, `music`) and described in one place, `src/ir/sound.js`, which the
+generator, the lint, the blocks and the browser preview all read.
+
+Three things came out of building it that a reading of the old code would
+not have shown:
+
+- **Every built-in bass line was silent.** The SN76489's divider is ten
+  bits, so it cannot play below about 110 Hz, and CVBasic's player mutes a
+  note whose divider does not fit. The bass instrument plays an octave down,
+  and every bass note asked for something below the chip's range. The
+  playtest counted PSG writes, and "silent" is a write. The lines are now
+  an octave up, the playtest listens for a volume above silence on each
+  voice, and the lint warns about an authored note the target cannot sound.
+- **The game over sting never played.** It was played only if some block
+  elsewhere named it, and none did. It is now a title-screen setting.
+- **Effects were silent on the MSX.** The effect player wrote to SN76489
+  channels the AY-3-8910 does not have. `engine/sfx_ay.bas` is the same
+  player for the AY, on channel C, reading the same table - the two chips
+  divide the same clock, so the data needs no translation.
 
 Every game now boots to a title screen and returns to it after a game over,
 so losing lands somewhere deliberate instead of dropping you straight back
@@ -263,6 +289,26 @@ was not there. The dominant art colour is now matched to the nearest fixed
 TMS colour by RGB distance, and a playtest asserts no sprite is drawn in
 colour 0, which is transparent.
 
-ColecoVision and MSX share the TMS renderer and should be close, but
-"should be" is what this whole document exists to stop me saying. Untested
-is untested.
+ColecoVision and MSX share the TMS renderer, and are no longer a "should
+be". `tools/sms.py` grew a headless ColecoVision and a headless MSX - the
+same Z80 and the same VDP behind different ports, with a stand-in BIOS of a
+few dozen bytes each, since a CVBasic program asks its BIOS for very little
+- and the suite builds the shooter and the platformer for both and plays
+them. Both passed the shooter's playtest unchanged once they could be run,
+apart from the MSX's silent effects (above).
+
+The platformer needed real work, because painted rooms had only ever been
+emitted for the Master System:
+
+- **Name tables are one byte a cell** on a TMS9918, not two.
+- **Tiles are one bit a pixel plus a colour table.** A game with terrain
+  uses `MODE 0`, where each row of a tile has its own two colours;
+  `src/ir/tms.js` keeps the two a row uses most and the editor previews
+  the result.
+- **The collision shadow does not fit.** 768 bytes of `map_attr` is nearly
+  all the RAM an SG-1000 or a ColecoVision has. Nothing writes to it while a
+  room runs, so `engine/terrain_rom.bas` reads the room's table from the
+  cartridge through a pointer instead. Same procedures, same cost a lookup.
+
+What is still missing for these two is an emulator in the editor: their
+games build and export, and the Play tab says to download the ROM.

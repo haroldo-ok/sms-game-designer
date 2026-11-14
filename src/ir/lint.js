@@ -13,6 +13,8 @@
  * the project making sense rather than about it fitting.
  */
 
+import {checkTune} from './sound.js';
+
 export function lint(ir) {
   const out = [];
 
@@ -136,13 +138,51 @@ export function lint(ir) {
   // A tune that does not exist would assemble to an undefined label, which
   // gasm80 reports while still exiting 0 and writing a ROM. Catch it here,
   // where the message can name the block.
-  const knownTunes = ['title', 'action', 'gameover'];
+  const tunes = ir.tunes || [];
   (ir.music || []).forEach((name) => {
-    if (!knownTunes.includes(name)) {
+    if (!tunes.some((t) => t.key === name)) {
       out.push(error('unknown-tune',
-          `There is no tune called "${name}". Available: ` +
-        knownTunes.join(', ') + '.'));
+          `Something plays a tune called "${name}", which does not exist. ` +
+        'Available: ' + tunes.map((t) => t.name).join(', ') + '.'));
     }
+  });
+
+  // The same for effects. A deleted effect does not break the build - the
+  // generator falls back to the first one - but a shot that suddenly makes
+  // a different noise with no explanation is its own kind of bug.
+  const sounds = ir.sounds || [];
+  (ir.soundRefs || []).forEach((name) => {
+    if (!sounds.some((s) => s.key === name)) {
+      out.push(warn('unknown-sound',
+          `Something plays a sound called "${name}", which no longer ` +
+        'exists. It will play the first sound instead.'));
+    }
+  });
+
+  // Authored tunes are checked note by note, played or not: a typo in a
+  // tune nobody plays yet is still easier to fix now than later.
+  tunes.filter((t) => !t.builtin || (ir.music || []).includes(t.key))
+      .forEach((t) => {
+        checkTune(t, ir.target).forEach((p) => {
+          // A broken tune that nothing plays is not emitted, so it cannot
+          // break the build: say so, but do not block Play over it.
+          const used = (ir.music || []).includes(t.key);
+          const sev = p.severity === 'error' && !used ? 'warning' : p.severity;
+          out.push(sev === 'error' ?
+            error('bad-tune', p.message) : warn('bad-tune', p.message));
+        });
+      });
+
+  // A tune's id becomes a label in the generated source. The editor only
+  // makes ids that work; a project file edited by hand might not.
+  const seen = new Set();
+  tunes.forEach((t) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(t.key) || seen.has(t.key)) {
+      out.push(error('bad-tune-id',
+          `The tune "${t.name}" has the id "${t.key}", which is ` +
+        (seen.has(t.key) ? 'already taken.' : 'not usable as a name.')));
+    }
+    seen.add(t.key);
   });
 
   // Blocks that name an actor which no longer exists.
@@ -180,16 +220,6 @@ export function lint(ir) {
       `exists. Point it at something, or delete the block.`,
         {blockId: d.blockId}));
   });
-
-  // Tilemaps are emitted in the Master System's two-bytes-a-cell format with
-  // a RAM collision shadow. The TMS9918 machines need a different layout and
-  // the profile turns the shadow off, so a room with tiles would build into
-  // garbage there. Better refused than shipped.
-  if (ir.target.video !== 'sms' && ir.rooms.some((r) => r.hasTerrain)) {
-    out.push(error('terrain-unsupported',
-        `Painted tiles are not supported on ${ir.target.label} yet. Clear ` +
-      `the tiles from your rooms, or switch the target to the Master System.`));
-  }
 
   // A cell pointing past the end of the tile set draws whatever happens to
   // be in VRAM there.

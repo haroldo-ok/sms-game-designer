@@ -23,6 +23,9 @@ import {
   migrate, emptyProject, newActor, newRoom, newAnimation, emptyScript,
   SCHEMA_VERSION, TARGETS,
 } from '../ir/schema.js';
+import {newSound, newTune} from '../ir/sound.js';
+import {TARGET_FLAGS} from '../workers/build-rom.js';
+import {buildPlayable} from './export-playable.js';
 
 const STORAGE_KEY = 'sms-game-designer:project';
 
@@ -82,7 +85,98 @@ export function save() {
   }
 }
 
+/* ---- undo and redo ---------------------------------------------------- */
+
+/**
+ * One undo stack for the whole project.
+ *
+ * The project is a single JSON document, so undo is a list of snapshots of
+ * it - no per-editor command objects, and nothing for a new editor to
+ * implement. A stroke of the pixel editor, a block dragged into a script, a
+ * deleted actor and an opened example are all the same thing here: the
+ * document changed.
+ *
+ * Changes are coalesced: a snapshot is taken once the project has been
+ * still for a moment, so dragging a line of tiles across a room is one step
+ * to undo, not thirty-two.
+ */
+const HISTORY_MAX = 80;
+const HISTORY_MS = 350;
+const history = [];
+let historyAt = -1;
+let historyTimer = null;
+// After an undo, editors reload and some of them write back what they just
+// loaded (Blockly re-serialises its workspace). Those echoes are not edits,
+// and recording one would throw away everything there was to redo.
+let settleUntil = 0;
+const SETTLE_MS = 300;
+
+export const canUndo = ref(false);
+export const canRedo = ref(false);
+
+function syncHistoryFlags() {
+  canUndo.value = historyAt > 0;
+  canRedo.value = historyAt < history.length - 1;
+}
+
+/** Snapshot the project now, if it differs from the last snapshot. */
+export function recordHistory() {
+  clearTimeout(historyTimer);
+  historyTimer = null;
+  const snap = JSON.stringify(project.value);
+  if (historyAt >= 0 && history[historyAt] === snap) return;
+  history.splice(historyAt + 1);
+  history.push(snap);
+  if (history.length > HISTORY_MAX) history.shift();
+  historyAt = history.length - 1;
+  syncHistoryFlags();
+}
+
+function restore(index) {
+  historyAt = index;
+  settleUntil = Date.now() + SETTLE_MS;
+  project.value = JSON.parse(history[index]);
+  // Selections are ids, so they survive unless the thing itself is gone.
+  const p = project.value;
+  if (!p.actors.some((a) => a.id === selectedActor.value)) {
+    selectedActor.value = p.actors[0]?.id || null;
+  }
+  if (!p.rooms.some((r) => r.id === selectedRoom.value)) {
+    selectedRoom.value = p.rooms[0]?.id || null;
+  }
+  syncHistoryFlags();
+}
+
+export function undo() {
+  // An edit made a moment ago may not have been snapshotted yet; without
+  // this, undoing straight after it would skip back two steps.
+  // Checked directly rather than through the pending timer: the watcher
+  // that sets the timer runs a tick after the edit, so an undo in the same
+  // tick as an edit would not know there was one.
+  if (Date.now() >= settleUntil) recordHistory();
+  if (historyAt <= 0) return false;
+  restore(historyAt - 1);
+  return true;
+}
+
+export function redo() {
+  if (Date.now() >= settleUntil) recordHistory();
+  if (historyAt >= history.length - 1) return false;
+  restore(historyAt + 1);
+  return true;
+}
+
+recordHistory();
+watch(project, () => {
+  if (Date.now() < settleUntil) return;
+  clearTimeout(historyTimer);
+  historyTimer = setTimeout(recordHistory, HISTORY_MS);
+}, {deep: true});
+
 export function newProject(name = 'My Game') {
+  // Replacing the project is an edit like any other, however soon after an
+  // undo it happens.
+  settleUntil = 0;
   project.value = emptyProject(name);
   selectedActor.value = null;
   selectedRoom.value = project.value.rooms[0]?.id || null;
@@ -229,6 +323,47 @@ export function removeTile(index) {
   return true;
 }
 
+/* ---- sound ----------------------------------------------------------- */
+
+/** Add a sound effect, starting from one of the built-ins. */
+export function addSound(from = 'shoot') {
+  const p = project.value;
+  if (!Array.isArray(p.sounds)) p.sounds = [];
+  const sound = newSound(uniqueId('sfx', p.sounds), from);
+  sound.name = uniqueName(`my ${from}`, p.sounds);
+  p.sounds.push(sound);
+  return sound;
+}
+
+export function removeSound(id) {
+  const p = project.value;
+  p.sounds = (p.sounds || []).filter((s) => s.id !== id);
+}
+
+export function addTune() {
+  const p = project.value;
+  if (!Array.isArray(p.music)) p.music = [];
+  const tune = newTune(uniqueId('tune', p.music));
+  tune.name = uniqueName('my tune', p.music);
+  p.music.push(tune);
+  return tune;
+}
+
+/**
+ * Delete a tune, and stop anything that played it by default. A room or the
+ * title screen still naming it would be an error on the next build; a
+ * `play music` block naming it is left for the lint to point at, because
+ * silently rewriting someone's script is worse than telling them.
+ */
+export function removeTune(id) {
+  const p = project.value;
+  p.music = (p.music || []).filter((t) => t.id !== id);
+  p.rooms.forEach((r) => {
+    if (r.music === id) r.music = null;
+  });
+  if (p.title && p.title.music === id) p.title.music = null;
+}
+
 /* ---- rooms ----------------------------------------------------------- */
 
 export function addRoom(name) {
@@ -271,6 +406,9 @@ export async function exportProject() {
  * so an example written for an older schema still opens.
  */
 export function openProject(data) {
+  // Replacing the project is an edit like any other, however soon after an
+  // undo it happens.
+  settleUntil = 0;
   project.value = migrate(JSON.parse(JSON.stringify(data)));
   selectedActor.value = project.value.actors[0]?.id || null;
   selectedRoom.value = project.value.rooms[0]?.id || null;
@@ -282,6 +420,7 @@ export async function importProject(file) {
   const entry = zip.file('project.json');
   if (!entry) throw new Error('That file does not contain a project.');
   const data = JSON.parse(await entry.async('string'));
+  settleUntil = 0;
   project.value = migrate(data);
   selectedActor.value = project.value.actors[0]?.id || null;
   selectedRoom.value = project.value.rooms[0]?.id || null;
@@ -300,12 +439,46 @@ export async function exportSource(source, engine) {
   zip.file(`${name}.bas`, source);
   const dir = zip.folder('engine');
   Object.keys(engine).forEach((f) => dir.file(f, engine[f]));
-  zip.file('README.txt',
-      `Built with SMS Game Designer (schema v${SCHEMA_VERSION}).\n\n` +
-    `  cvbasic --sms ${name}.bas ${name}.asm\n` +
-    `  gasm80 ${name}.asm -o ${name}.sms -sms\n\n` +
-    `The engine/ directory must sit alongside the .bas file.\n`);
+  zip.file('README.txt', sourceReadme(name, project.value.target));
   saveAs(await zip.generateAsync({type: 'blob'}), `${name}-source.zip`);
+}
+
+/** The game as a web page: ROM, emulator and index.html, zipped. */
+export async function exportPlayable(rom) {
+  const base = new URL('emulator/', document.baseURI).href;
+  const zip = await buildPlayable({
+    rom,
+    target: TARGETS[project.value.target] || TARGETS.sms,
+    title: project.value.name,
+    read: async (path) => {
+      const res = await fetch(base + path);
+      if (!res.ok) throw new Error(`The emulator file ${path} is missing.`);
+      return res.arrayBuffer();
+    },
+  });
+  saveAs(await zip.generateAsync({type: 'blob'}),
+      `${safeName(project.value.name)}-web.zip`);
+}
+
+/**
+ * The build instructions that go in the source zip.
+ *
+ * These used to be written out for the Master System whatever the project
+ * was: an SG-1000 game exported with instructions that built it as an SMS
+ * cartridge, which compiles without complaint and does not run.
+ */
+export function sourceReadme(name, targetId) {
+  const target = TARGETS[targetId] || TARGETS.sms;
+  const flags = TARGET_FLAGS[target.id] || TARGET_FLAGS.sms;
+  const cv = ['cvbasic', flags.cv, `${name}.bas`, `${name}.asm`]
+      .filter(Boolean).join(' ');
+  const asm = ['gasm80', `${name}.asm`, '-o', `${name}.${flags.ext}`,
+    ...flags.asm].join(' ');
+  return `Built with SMS Game Designer (schema v${SCHEMA_VERSION}) for the ` +
+    `${target.label}.\n\n  ${cv}\n  ${asm}\n\n` +
+    'The engine/ directory must sit alongside the .bas file, and ' +
+    'cvbasic_prologue.asm\nand cvbasic_epilogue.asm from CVBasic must be ' +
+    'in the directory you build from.\n';
 }
 
 export function exportRom(rom) {
@@ -319,6 +492,14 @@ function uniqueId(prefix, list) {
   const taken = new Set(list.map((x) => x.id));
   while (taken.has(`${prefix}_${n}`)) n++;
   return `${prefix}_${n}`;
+}
+
+function uniqueName(base, list) {
+  const taken = new Set(list.map((x) => x.name));
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base} ${n}`)) n++;
+  return `${base} ${n}`;
 }
 
 function safeName(s) {

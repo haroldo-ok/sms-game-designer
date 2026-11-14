@@ -76,10 +76,14 @@ export function generateProgram(ir, opts = {}) {
   push('');
 
   push('init_game:\tPROCEDURE');
+  const terrain = ir.rooms.some((r) => r.hasTerrain);
   if (ir.target.video === 'tms') {
-    // Graphics II. Character definitions are faster in this mode, and it is
-    // the only one with a full 256x192 bitmap-like background.
-    push('\tMODE 2');
+    // MODE 2 gives a character one colour pair shared with seven others,
+    // which is all the text of a game with no tilemap needs and is the
+    // faster mode to load. A game with painted rooms uses MODE 0, where
+    // every row of every tile has its own two colours - the difference
+    // between tiles that look drawn and tiles that look stencilled.
+    push(terrain ? '\tMODE 0' : '\tMODE 2');
   } else {
     push('\tMODE 4');
     push('\tBORDER 0,4');
@@ -119,6 +123,9 @@ export function generateProgram(ir, opts = {}) {
   // should not spend ROM and VRAM on art it never draws.
   if (ir.tiles.length && ir.rooms.some((r) => r.hasTerrain)) {
     push(`\tDEFINE CHAR ${ir.layout.tileBase},${ir.tiles.length},tile_data`);
+    if (ir.target.video === 'tms') {
+      push(`\tDEFINE COLOR ${ir.layout.tileBase},${ir.tiles.length},tile_colour`);
+    }
   }
   ir.globals.forEach((g) => push(`\t${g.symbol} = ${g.initial}`));
   push('\tgame_state = 0');
@@ -175,11 +182,15 @@ export function generateProgram(ir, opts = {}) {
   push('\t\' ===== engine kernel =====');
   push(`\tINCLUDE "engine/kernel.bas"`);
   // Only the renderer is target-specific. Everything else - pool, movers,
-  // animation, reaping, terrain, sound - is shared, which is the claim the
+  // animation, reaping, terrain - is shared, which is the claim the
   // whole target-profile idea rests on.
   push(`\tINCLUDE "engine/render_${ir.target.video}.bas"`);
+  // ...and the sound effect player, which differs by sound chip.
+  push(`\tINCLUDE "engine/sfx_${ir.target.sound || 'sn'}.bas"`);
   if (ir.rooms.some((r) => r.hasTerrain)) {
-    push(`\tINCLUDE "engine/terrain.bas"`);
+    // With a RAM shadow where there is RAM for one, straight from the
+    // cartridge where there is not.
+    push(`\tINCLUDE "engine/terrain${ir.target.terrainShadow ? '' : '_rom'}.bas"`);
   }
   push('');
 
@@ -188,7 +199,7 @@ export function generateProgram(ir, opts = {}) {
   push('');
   pushAll(emitGroupTable(ir));
   push('');
-  pushAll(emitSfxData());
+  pushAll(emitSfxData(ir));
   push('');
   pushAll(emitMusicData(ir));
   push('');

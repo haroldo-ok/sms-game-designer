@@ -28,6 +28,15 @@
           label="Name"
           style="max-width:180px"
         />
+        <v-select
+          v-model="room.music"
+          :items="tuneItems"
+          dense
+          hide-details
+          label="Music"
+          class="room-music"
+          style="max-width:170px"
+        />
         <v-btn-toggle v-model="mode" dense mandatory>
           <v-btn small value="place">Place actors</v-btn>
           <v-btn small value="paint">Paint tiles</v-btn>
@@ -58,21 +67,23 @@
           :rows="target.screenRows"
           :bg-palette="project.palette.background"
           :sprite-palette="project.palette.sprite"
+          :tms="twoColourTiles"
           @changed="$emit('changed')"
         />
 
         <div class="side">
           <!-- what to paint -->
           <template v-if="mode === 'paint'">
-            <p v-if="!tilesSupported" class="warn">
-              {{ target.label }} cannot show painted tiles yet, so a room with
-              tiles will not build for it. Switch the target to the Master
-              System to use them.
+            <p v-if="twoColourTiles" class="tms-note">
+              On the {{ target.label }} each row of a tile shows two colours,
+              from the console's own fixed palette. A row drawn with more
+              keeps the two it uses most.
             </p>
             <TilePalette
               :tiles="project.tiles"
               :selected="activeTile"
               :palette="project.palette.background"
+              :tms="twoColourTiles"
               @select="paintTile = $event"
               @add="addTileFrom"
               @remove="deleteTile"
@@ -167,6 +178,7 @@ import {
   addTile, removeTile,
 } from '../hooks/project.js';
 import {TARGETS} from '../ir/schema.js';
+import {tuneList} from '../ir/sound.js';
 
 export default {
   name: 'RoomsView',
@@ -185,11 +197,15 @@ export default {
     room() {
       return currentRoom.value;
     },
+    tuneItems() {
+      return [{text: 'none', value: null},
+        ...tuneList(project.value).map((t) => ({text: t.name, value: t.key}))];
+    },
     target() {
       return TARGETS[project.value.target] || TARGETS.sms;
     },
-    tilesSupported() {
-      return this.target.video === 'sms';
+    twoColourTiles() {
+      return this.target.video === 'tms';
     },
     /** The chosen actor if it still exists, else the first one. */
     activeActor() {
@@ -254,9 +270,9 @@ export default {
 .actor-pick .pick:hover { background: rgba(255,255,255,.05); }
 .actor-pick .pick.sel { background: rgba(87,184,148,.16); }
 .meta { opacity: .55; font-size: 11px; }
-.warn {
-  font-size: 12px; padding: 8px; border-radius: 4px;
-  background: rgba(216,169,74,.12); line-height: 1.45;
+.tms-note {
+  font-size: 12px; padding: 8px; border-radius: 4px; margin-bottom: 8px;
+  background: rgba(74,126,196,.1); line-height: 1.45;
 }
 .note { font-size: 12px; opacity: .6; max-width: 640px; line-height: 1.5; margin-top: 8px; }
 h4 { margin-top: 14px; }

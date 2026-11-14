@@ -21,6 +21,22 @@
       />
       <v-spacer />
       <span v-if="dirty" class="saving">saving…</span>
+      <v-btn
+        icon
+        small
+        class="undo-btn"
+        :disabled="!canUndo"
+        title="Undo (Ctrl+Z)"
+        @click="undo"
+      ><v-icon small>$undo</v-icon></v-btn>
+      <v-btn
+        icon
+        small
+        class="redo-btn"
+        :disabled="!canRedo"
+        title="Redo (Ctrl+Shift+Z)"
+        @click="redo"
+      ><v-icon small>$redo</v-icon></v-btn>
       <v-menu offset-y max-width="380">
         <template #activator="{on}">
           <v-btn text small v-on="on">Open</v-btn>
@@ -63,6 +79,20 @@
           <v-list-item @click="downloadSource">
             <v-list-item-title>CVBasic source + engine</v-list-item-title>
           </v-list-item>
+          <v-list-item
+            :disabled="!lastRom || !target.bundledEmulator"
+            @click="downloadPlayable"
+          >
+            <v-list-item-content>
+              <v-list-item-title>Playable web page (.zip)</v-list-item-title>
+              <v-list-item-subtitle v-if="!target.bundledEmulator">
+                Not available for the {{ target.label }}
+              </v-list-item-subtitle>
+              <v-list-item-subtitle v-else-if="!lastRom">
+                Press Play first
+              </v-list-item-subtitle>
+            </v-list-item-content>
+          </v-list-item>
         </v-list>
       </v-menu>
       <v-btn
@@ -82,6 +112,7 @@
             <v-tab>Game</v-tab>
             <v-tab>Actors</v-tab>
             <v-tab>Rooms</v-tab>
+            <v-tab>Sound</v-tab>
             <v-tab>Play</v-tab>
             <v-tab>Code</v-tab>
           </v-tabs>
@@ -90,6 +121,7 @@
             <v-tab-item><GameView :gen="gen" @changed="regenerate" /></v-tab-item>
             <v-tab-item><ActorsView :blame="blame" @changed="regenerate" /></v-tab-item>
             <v-tab-item><RoomsView @changed="regenerate" /></v-tab-item>
+            <v-tab-item><SoundView @changed="regenerate" /></v-tab-item>
             <v-tab-item>
               <PlayView
                 :rom="lastRom"
@@ -154,18 +186,21 @@
 </template>
 
 <script>
-import {ref, computed, watch, onMounted} from '@vue/composition-api';
+import {
+  ref, computed, watch, onMounted, onBeforeUnmount,
+} from '@vue/composition-api';
 
 import GameView from './views/GameView.vue';
 import ActorsView from './views/ActorsView.vue';
 import RoomsView from './views/RoomsView.vue';
+import SoundView from './views/SoundView.vue';
 import PlayView from './views/PlayView.vue';
 import CodeView from './views/CodeView.vue';
 import BudgetMeter from './components/BudgetMeter.vue';
 
 import {
   project, dirty, exportProject, importProject, exportSource, exportRom,
-  openProject,
+  openProject, exportPlayable, undo, redo, canUndo, canRedo,
 } from './hooks/project.js';
 import {EXAMPLES, loadExample} from './examples/index.js';
 import {
@@ -173,11 +208,17 @@ import {
 } from './hooks/cvbasic-compiler.js';
 import {TARGETS} from './ir/schema.js';
 
+// Tab positions, in the order the template lists them. Play used to be a
+// bare 3 in three places, which is one inserted tab away from "Play opens
+// the Sound editor".
+const TAB_ACTORS = 1;
+const TAB_PLAY = 4;
+
 export default {
   name: 'App',
-  components: {GameView, ActorsView, RoomsView, PlayView, CodeView, BudgetMeter},
+  components: {GameView, ActorsView, RoomsView, SoundView, PlayView, CodeView, BudgetMeter},
   setup() {
-    const tab = ref(1);
+    const tab = ref(TAB_ACTORS);
     const gen = ref({ir: null, problems: [], source: '', frame: {percent: 0, parts: []}});
     const lastBuild = ref(null);
     const lastRom = ref(null);
@@ -208,6 +249,33 @@ export default {
     watch(project, regenerate, {deep: true, immediate: true});
     onMounted(regenerate);
 
+    // A ROM is for one console. Keeping the last one after the target
+    // changes meant Export offered an SMS image under the new console's
+    // file extension until the next Play.
+    watch(() => project.value.target, () => {
+      lastRom.value = null;
+      lastBuild.value = null;
+    });
+
+    /**
+     * Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y), for the whole project. Inside a
+     * text box the browser's own undo is the right one - it undoes typing a
+     * character at a time, which a project snapshot cannot.
+     */
+    function onKey(ev) {
+      if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+      const key = String(ev.key || '').toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+      const el = ev.target;
+      const tag = el && el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (el && el.isContentEditable)) return;
+      ev.preventDefault();
+      if (key === 'y' || ev.shiftKey) redo();
+      else undo();
+    }
+    onMounted(() => window.addEventListener('keydown', onKey));
+    onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
+
     async function run() {
       playError.value = null;
       const res = await build(project.value, {wantDebug: true});
@@ -215,13 +283,13 @@ export default {
       if (res.ok) {
         lastRom.value = res.rom;
         blame.value = null;
-        tab.value = 3;
+        tab.value = TAB_PLAY;
       } else {
         blame.value = res.blame || {internal: true, message: res.error};
         // A build error that traces to a block belongs next to that block,
         // not on a Play screen the user is now staring at uselessly.
-        if (res.blame && res.blame.blockId) tab.value = 1;
-        else if (res.blocked) tab.value = 1;
+        if (res.blame && res.blame.blockId) tab.value = TAB_ACTORS;
+        else if (res.blocked) tab.value = TAB_ACTORS;
       }
     }
 
@@ -242,6 +310,14 @@ export default {
       exportProject,
       downloadRom: () => lastRom.value && exportRom(lastRom.value),
       downloadSource: () => exportSource(gen.value.source, ENGINE),
+      downloadPlayable: async () => {
+        try {
+          await exportPlayable(lastRom.value);
+        } catch (e) {
+          alert(`Could not make the web page: ${e.message}`);
+        }
+      },
+      undo, redo, canUndo, canRedo,
       copySource: () => navigator.clipboard?.writeText(gen.value.source),
       importProject,
       examples: EXAMPLES,
@@ -264,7 +340,7 @@ export default {
       }
       try {
         this.openProject(await loadExample(ex));
-        this.tab = 1;
+        this.tab = TAB_ACTORS;
       } catch (e) {
         alert(`Could not open that example: ${e.message}`);
       }

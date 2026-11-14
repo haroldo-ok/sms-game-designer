@@ -41,6 +41,8 @@
  * emitting every cell upward; it emits `changed` once per stroke, so the
  * budget meter and autosave are not woken thirty times by one drag.
  */
+import {tmsTileCss} from '../ir/tms.js';
+
 export default {
   name: 'RoomCanvas',
   props: {
@@ -55,6 +57,8 @@ export default {
     cell: {type: Number, default: 16},
     bgPalette: {type: Array, default: () => []},
     spritePalette: {type: Array, default: () => []},
+    // Draw tiles as a TMS9918 will: two fixed colours a row.
+    tms: {type: Boolean, default: false},
   },
   data() {
     return {stroke: null, last: null, hover: null, dirty: false};
@@ -76,6 +80,9 @@ export default {
     'actors': {handler: 'redraw', deep: true},
     'room.placements': {handler: 'redraw', deep: true},
     'room.tiles': {handler: 'redraw', deep: true},
+    'bgPalette': {handler: 'redraw', deep: true},
+    'spritePalette': {handler: 'redraw', deep: true},
+    'tms': 'redraw',
   },
   mounted() {
     // A stroke that ends outside the canvas still has to end.
@@ -197,6 +204,8 @@ export default {
         ctx.fillRect(0, 0, this.cols * c, this.rows * c);
 
         const grid = this.room.tiles;
+        // Converted once per tile per redraw, not once per cell.
+        const tmsCache = {};
         for (let y = 0; y < this.rows; y++) {
           for (let x = 0; x < this.cols; x++) {
             const t = grid && grid[y] ? grid[y][x] | 0 : 0;
@@ -207,7 +216,15 @@ export default {
               ctx.fillRect(x * c, y * c, c, c);
               continue;
             }
-            this.drawPixels(ctx, def.pixels, x * c, y * c, px, this.bgPalette, false);
+            if (this.tms) {
+              if (!tmsCache[t]) tmsCache[t] = tmsTileCss(def, this.bgPalette);
+              tmsCache[t].forEach((row, py) => row.forEach((css, pxl) => {
+                ctx.fillStyle = css;
+                ctx.fillRect(x * c + pxl * px, y * c + py * px, px, px);
+              }));
+            } else {
+              this.drawPixels(ctx, def.pixels, x * c, y * c, px, this.bgPalette, false);
+            }
           }
         }
 

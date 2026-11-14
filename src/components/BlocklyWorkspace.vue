@@ -74,15 +74,36 @@ export default {
         actors: () => project.value.actors,
         globals: () => project.value.globals,
         rooms: () => project.value.rooms,
+        sounds: () => project.value.sounds,
+        music: () => project.value.music,
         fields: () => currentActor.value?.fields || [],
         animations: () => currentActor.value?.animations || [],
         groups: () => [...new Set(project.value.actors.map((a) => a.group))],
+      });
+      // Undo belongs to the project, not to one workspace. Blockly listens
+      // for Ctrl+Z on the whole document and undoes in whichever workspace
+      // was touched last, so with its shortcut left in place one keypress
+      // undid twice - once there and once in the project - and the two
+      // histories drifted apart. A script is part of the project, so the
+      // project's undo already covers every block edit.
+      ['undo', 'redo'].forEach((name) => {
+        try {
+          Blockly.ShortcutRegistry.registry.unregister(name);
+        } catch (e) {
+          // Not registered under that name in this version of Blockly.
+        }
       });
       blocksDefined = true;
     }
 
     this.workspace = Blockly.inject(this.$refs.host, {
       toolbox: toolboxFor(this.scope),
+      // Blockly's pictures and sounds - the trashcan, the dropdown arrows,
+      // the click when blocks connect - from this folder. Left unset,
+      // Blockly fetches them from its own demo site on every load, which is
+      // a request to somewhere else from an editor that promises to make
+      // none, and a trashcan-shaped hole when offline.
+      media: new URL('blockly-media/', document.baseURI).href,
       renderer: 'zelos',
       trashcan: true,
       zoom: {controls: true, wheel: true, startScale: 0.85},

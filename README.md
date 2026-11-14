@@ -47,8 +47,12 @@ the pool, one 16x16 hardware sprite per actor instead of two 8x16 ones, one
 colour per sprite instead of per pixel, and not a single change to any actor,
 script or collision rule.
 
-ColecoVision and MSX share that renderer and should be close. They are not
-tested, so the roadmap says so.
+ColecoVision and MSX share that renderer, and are now tested the same way:
+the shooter and the platformer are built for each and played on a headless
+machine by the test suite (`tools/sms.py` has a ColecoVision and an MSX in it
+beside the Master System). Painted rooms work on all four consoles; on the
+three TMS9918 machines a tile shows two colours a row from the console's
+fixed palette, and the editor previews it that way.
 
 ## Getting started
 
@@ -245,8 +249,18 @@ that returns to it, five sound effects, and three tunes. Music takes two of
 the four sound channels and effects take the other two, so they never cut
 each other off.
 
-None of it needs a tracker or an envelope editor. All of it is plain,
-commented CVBasic in the exported source.
+None of it needs a tracker or an envelope editor - but both are there when
+you want them. The **Sound** tab draws effects as bars (pitch and loudness,
+one bar a frame) and writes tunes on a two-voice piano roll, with a Listen
+button for each. What you make appears in the `play sound` and `play music`
+blocks, in each room's Music setting, and in the title screen settings on
+the Game tab. All of it is plain, commented CVBasic in the exported source.
+
+## Undo
+
+Ctrl+Z and Ctrl+Shift+Z (and the arrows in the toolbar) undo and redo across
+the whole project: pixels, tiles, rooms, blocks, sounds, settings, even
+opening an example over your work. A drag is one step.
 
 ## Escape hatches
 
@@ -254,7 +268,10 @@ commented CVBasic in the exported source.
 - **Export CVBasic source + engine** as a zip that builds standalone. The
   generated code is commented and meant to be read; that is the answer to
   every "can it also do X".
-- **Export a playable HTML bundle** — ROM plus emulator plus a page.
+- **Export a playable web page** — a zip with the ROM, the emulator and an
+  `index.html`, ready for any static host or an itch.io HTML game. Master
+  System and SG-1000 only, since those are the consoles with a bundled
+  emulator.
 
 ## Credits
 

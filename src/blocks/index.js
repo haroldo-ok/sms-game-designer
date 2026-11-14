@@ -21,6 +21,8 @@
  * everything everywhere is how block tools become unusable.
  */
 
+import {sfxList, tuneList} from '../ir/sound.js';
+
 const HUE = {
   motion: 230, appearance: 260, lifecycle: 20, sensing: 200,
   fields: 330, control: 120, game: 45,
@@ -41,6 +43,13 @@ export function defineBlocks(Blockly, ctx = {}) {
   const anims = dd(() => (ctx.animations?.() || []).map((a) => [a.name, a.name]));
   const globals = dd(() => (ctx.globals?.() || []).map((g) => [g.name, g.name]));
   const rooms = dd(() => (ctx.rooms?.() || []).map((r) => [r.name, r.id]));
+
+  // The built-in effects and tunes, then whatever the project has made on
+  // the Sound tab. With no project to ask, the built-ins alone.
+  const sounds = () => sfxList({sounds: ctx.sounds?.() || []})
+      .map((s) => [s.name, s.key]);
+  const tunes = () => tuneList({music: ctx.music?.() || []})
+      .map((t) => [t.name, t.key]);
 
   const define = (type, json) => {
     Blockly.Blocks[type] = {init() {
@@ -276,9 +285,7 @@ export function defineBlocks(Blockly, ctx = {}) {
 
   define('sms_play_sound', {
     message0: 'play sound %1',
-    args0: [{type: 'field_dropdown', name: 'SFX', options: [
-      ['shoot', 'shoot'], ['pickup', 'pickup'], ['explosion', 'explode'],
-      ['jump', 'jump'], ['hurt', 'hurt']]}],
+    args0: [{type: 'field_dropdown', name: 'SFX', options: sounds}],
     previousStatement: null, nextStatement: null, colour: HUE.game,
     tooltip: 'Plays on the two PSG channels the music player does not use, ' +
       'so it never cuts the music off.',
@@ -286,9 +293,7 @@ export function defineBlocks(Blockly, ctx = {}) {
 
   define('sms_play_music', {
     message0: 'play music %1',
-    args0: [{type: 'field_dropdown', name: 'TUNE', options: [
-      ['title theme', 'title'], ['action theme', 'action'],
-      ['game over sting', 'gameover']]}],
+    args0: [{type: 'field_dropdown', name: 'TUNE', options: tunes}],
     previousStatement: null, nextStatement: null, colour: HUE.game,
     tooltip: 'Uses two of the four sound channels, so sound effects still ' +
       'play over it.',

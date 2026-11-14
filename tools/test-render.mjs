@@ -92,15 +92,70 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-/** Compile a single-file component into something Vue can instantiate. */
-function load(rel) {
+/**
+ * Compile a single-file component into something Vue can instantiate.
+ *
+ * A component's script is evaluated as a function body, which cannot contain
+ * `import`. For a long time that was fine, because none of the components
+ * rendered here imported anything - and it meant that the first one to
+ * share a helper with the generator could no longer be tested at all. So the
+ * imports are resolved ahead of time (see preload) and handed in as
+ * arguments under the names the script expects.
+ */
+const preloaded = new Map();
+
+async function preload(rel) {
   const sfc = compiler.parseComponent(readFileSync(join(root, rel), 'utf8'));
+  const bindings = [];
+  const values = [];
+  const IMPORT = /^import\s+(\{[^}]*\}|\w+)\s+from\s+'([^']+)';?[ \t]*$/gm;
+  let script = sfc.script.content;
+  for (const m of [...script.matchAll(IMPORT)]) {
+    const [, names, from] = m;
+    if (!from.startsWith('.')) {
+      throw new Error(`${rel} imports ${from}, which this loader cannot supply`);
+    }
+    const mod = await import(resolve(dirname(join(root, rel)), from));
+    if (names.startsWith('{')) {
+      names.slice(1, -1).split(',').map((n) => n.trim()).filter(Boolean)
+          .forEach((n) => {
+            bindings.push(n);
+            values.push(mod[n]);
+          });
+    } else {
+      bindings.push(names);
+      values.push(mod.default);
+    }
+  }
+  script = script.replace(IMPORT, '');
+  preloaded.set(rel, {sfc, script, bindings, values});
+}
+
+function load(rel) {
+  const entry = preloaded.get(rel);
+  // Evaluated once, as a real module is: a component's module-level state
+  // (the pixel editors' shared clipboard, say) is shared between instances.
+  if (entry.component) return entry.component;
+  entry.component = evaluate(entry);
+  return entry.component;
+}
+
+function evaluate({sfc, script, bindings, values}) {
   const {render, staticRenderFns} =
     compiler.compileToFunctions(sfc.template.content);
-  const script = sfc.script.content.replace(/^export default/m, 'module.exports =');
+  const body = script.replace(/^export default/m, 'module.exports =');
   const mod = {exports: {}};
-  new Function('module', 'exports', 'require', script)(mod, mod.exports, require);
+  new Function('module', 'exports', 'require', ...bindings, body)(
+      mod, mod.exports, require, ...values);
   return {...mod.exports, render, staticRenderFns};
+}
+
+// Every component this file renders, found by reading the file itself, so a
+// new test cannot forget to list its component.
+const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+for (const rel of new Set([...self.matchAll(/render\('(src\/[^']+\.vue)'/g)]
+    .map((m) => m[1]))) {
+  await preload(rel);
 }
 
 const {buildIR} = await import('../src/ir/build-ir.js');
@@ -245,8 +300,96 @@ test('the sprite editor tells you which colour model you are in', () => {
   const mono = render('src/components/SpriteEditor.vue', {
     frame, previous: null, target: tms, palette: project.palette.sprite,
   });
-  assert(/one colour per sprite/.test(flat(mono)),
+  assert(/gives a sprite one colour/.test(flat(mono)),
       'a TMS target is not warned that its art will be flattened');
+});
+
+const blank = (w = 16, h = 16) =>
+  ({pixels: Array.from({length: h}, () => new Array(w).fill(0))});
+const editor = (frame, extra = {}) => render('src/components/SpriteEditor.vue', {
+  frame, previous: null, target: ir.target,
+  palette: [...project.palette.sprite], ...extra,
+});
+// The editor is 16 px to a pixel at this size, and jsdom reports the canvas
+// at the origin.
+const pixelAt = (x, y, button = 0, shiftKey = false) =>
+  ({clientX: x * 16 + 4, clientY: y * 16 + 4, button, shiftKey});
+
+test('the right button picks a colour and paints nothing', () => {
+  // mousedown fires for every button. The right one used to paint the pixel
+  // in the current colour before the context menu handler picked it up.
+  const frame = blank();
+  frame.pixels[2][2] = 7;
+  const w = editor(frame);
+  w.vm.colour = 5;
+  w.find('canvas').trigger('mousedown', pixelAt(2, 2, 2));
+  w.find('canvas').trigger('contextmenu', pixelAt(2, 2, 2));
+  assert(frame.pixels[2][2] === 7, `the pixel was repainted to ${frame.pixels[2][2]}`);
+  assert(w.vm.colour === 7, `picked colour ${w.vm.colour}, not 7`);
+});
+
+test('the fill tool floods a region through the canvas', () => {
+  const frame = blank(8, 8);
+  for (let i = 0; i < 8; i++) frame.pixels[4][i] = 3; // a wall across
+  const w = editor(frame);
+  w.vm.colour = 9;
+  w.vm.tool = 'fill';
+  w.find('canvas').trigger('mousedown', pixelAt(1, 1));
+  assert(frame.pixels[0][0] === 9 && frame.pixels[3][7] === 9,
+      'the region above the wall was not filled');
+  assert(frame.pixels[4][0] === 3 && frame.pixels[5][0] === 0,
+      'the fill went through the wall');
+  assert(w.emitted('changed'), 'a fill did not tell the parent to rebuild');
+});
+
+test('clearing a frame is a change Vue can see', async () => {
+  // Array.prototype.fill is not one of the methods Vue 2 observes: Clear
+  // used to blank the canvas while watchers of the frame - autosave among
+  // them - heard nothing.
+  const frame = blank(8, 8);
+  frame.pixels[1][1] = 4;
+  const w = editor(frame);
+  let seen = 0;
+  w.vm.$watch('frame', () => seen++, {deep: true});
+  w.find('.clear').trigger('click');
+  await w.vm.$nextTick();
+  assert(frame.pixels[1][1] === 0, 'the frame was not cleared');
+  assert(seen > 0, 'nothing watching the frame was told it changed');
+});
+
+test('flip, nudge, copy and paste act on the frame', () => {
+  const frame = blank(8, 8);
+  frame.pixels[0][0] = 6;
+  const w = editor(frame);
+  w.find('.flip-h').trigger('click');
+  assert(frame.pixels[0][7] === 6 && frame.pixels[0][0] === 0, 'flip left-right');
+  w.find('.flip-v').trigger('click');
+  assert(frame.pixels[7][7] === 6, 'flip top-bottom');
+  w.find('.nudge-right').trigger('click');
+  assert(frame.pixels[7][0] === 6, 'nudging right did not wrap round');
+  w.find('.copy').trigger('click');
+  w.find('.clear').trigger('click');
+  assert(frame.pixels[7][0] === 0, 'clear');
+  // Pasted into a different editor: the clipboard is shared between them.
+  const other = blank(8, 8);
+  const w2 = editor(other);
+  w2.find('.paste').trigger('click');
+  assert(other.pixels[7][0] === 6, 'the copied frame did not paste elsewhere');
+});
+
+test('changing a palette entry changes the palette, not the pixels', async () => {
+  const frame = blank(8, 8);
+  frame.pixels[0][0] = 3;
+  const w = editor(frame);
+  w.vm.colour = 3;
+  w.find('.edit-colour').trigger('click');
+  await w.vm.$nextTick();
+  const picks = w.findAll('.pick');
+  assert(picks.length === 64, `${picks.length} colours offered, the console has 64`);
+  picks.at(42).trigger('click');
+  assert(w.vm.palette[3] === 42, `palette entry 3 is ${w.vm.palette[3]}`);
+  assert(frame.pixels[0][0] === 3, 'the pixel\'s index changed');
+  assert(w.emitted('changed'), 'a palette change did not trigger a rebuild');
 });
 
 test('painting a pixel changes the frame and reports it', () => {
